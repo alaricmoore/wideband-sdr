@@ -1,0 +1,20 @@
+services:
+  sdr-ai-assist:
+    build: .
+    container_name: sdr-ai-assist
+    # Host networking: the container's "localhost" == the host's localhost, so it
+    # can reach Ollama at localhost:11434 (Ollama binds to 127.0.0.1 by default)
+    # and the rtl_tcp server on the LAN. The app listens directly on host:8000.
+    network_mode: host
+    environment:
+      # rtl_tcp target (override via a `.env` file or your environment)
+      SDR_HOST: "${SDR_HOST:-127.0.0.1}"
+      SDR_PORT: "${SDR_PORT:-1234}"
+      # Ollama (running on the host)
+      OLLAMA_URL: "${OLLAMA_URL:-http://localhost:11434}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-gemma4:latest}"
+      # optional tuning
+      # SAMPLE_RATE: "2400000"
+      # DEFAULT_FREQ: "100000000"
+      # DEFAULT_GAIN: "auto"
+    restart: unless-stopped

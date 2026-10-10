@@ -1,0 +1,218 @@
+"""FastAPI app: REST + WebSocket bridge between browser, radio, and Ollama."""
+import asyncio
+import json
+import logging
+import queue
+from pathlib import Path
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+import config
+import demod
+from ai_agent import chat as run_ai_chat
+from radio import Radio
+
+log = logging.getLogger(__name__)
+
+app = FastAPI(title="SDR AI Assist")
+radio = Radio()
+
+clients: set[WebSocket] = set()
+audio_clients: set[WebSocket] = set()
+
+
+class ConnectReq(BaseModel):
+    host: str | None = None
+    port: int | None = None
+
+
+class TuneReq(BaseModel):
+    freq_hz: float
+
+
+class GainReq(BaseModel):
+    gain: str
+
+
+class SampleRateReq(BaseModel):
+    sample_rate: int
+
+
+class FreqCorrectionReq(BaseModel):
+    ppm: int
+
+
+class ChatReq(BaseModel):
+    message: str
+    history: list[dict] = []
+
+
+@app.on_event("startup")
+async def _startup():
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    asyncio.create_task(_broadcast_loop())
+    asyncio.create_task(_audio_broadcast_loop())
+    if config.AUTO_CONNECT:
+        try:
+            radio.connect()
+        except Exception as e:  # noqa: BLE001
+            log.warning("auto-connect failed (will retry on demand): %s", e)
+
+
+async def _broadcast_loop():
+    last = -1
+    while True:
+        if radio.latest_spectrum is not None and radio.seq != last:
+            last = radio.seq
+            payload = json.dumps(radio.latest_spectrum)
+            for ws in list(clients):
+                try:
+                    await ws.send_text(payload)
+                except Exception:  # noqa: BLE001
+                    clients.discard(ws)
+        await asyncio.sleep(config.BROADCAST_INTERVAL)
+
+
+async def _audio_broadcast_loop():
+    while True:
+        if audio_clients:
+            while True:
+                try:
+                    audio = radio.audio_queue.get_nowait()
+                except queue.Empty:
+                    break
+                data = audio.astype("<f4").tobytes()
+                for ws in list(audio_clients):
+                    try:
+                        await ws.send_bytes(data)
+                    except Exception:  # noqa: BLE001
+                        audio_clients.discard(ws)
+        await asyncio.sleep(0.02)
+
+
+# ---- REST API ----
+@app.get("/api/status")
+def api_status():
+    return radio.status()
+
+
+@app.post("/api/connect")
+def api_connect(req: ConnectReq):
+    try:
+        radio.connect(req.host, req.port)
+        return radio.status()
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"connect failed: {e}"}
+
+
+@app.post("/api/disconnect")
+def api_disconnect():
+    radio.disconnect()
+    return {"ok": True}
+
+
+@app.post("/api/tune")
+def api_tune(req: TuneReq):
+    return radio.tune(req.freq_hz)
+
+
+@app.post("/api/gain")
+def api_gain(req: GainReq):
+    gain = "auto" if req.gain.strip().lower() == "auto" else float(req.gain)
+    return radio.set_gain(gain)
+
+
+@app.post("/api/sample_rate")
+def api_sample_rate(req: SampleRateReq):
+    return radio.set_sample_rate(req.sample_rate)
+
+
+@app.post("/api/freq_correction")
+def api_freq_correction(req: FreqCorrectionReq):
+    return radio.set_freq_correction(req.ppm)
+
+
+@app.post("/api/chat")
+def api_chat(req: ChatReq):
+    return run_ai_chat(req.message, req.history, radio)
+
+
+# ---- WebSocket ----
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    await ws.accept()
+    clients.add(ws)
+    try:
+        while True:
+            text = await ws.receive_text()
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            t = data.get("type")
+            if t == "tune":
+                radio.tune(float(data.get("freq_hz", 0)))
+            elif t == "gain":
+                g = str(data.get("gain", "auto"))
+                radio.set_gain("auto" if g.lower() == "auto" else float(g))
+            elif t == "sample_rate":
+                radio.set_sample_rate(int(data.get("sample_rate", config.SAMPLE_RATE)))
+            elif t == "freq_correction":
+                radio.set_freq_correction(int(data.get("ppm", 0)))
+            elif t == "config":
+                radio.set_audio_mode(data.get("mode", config.DEFAULT_DEMOD))
+                if data.get("bandwidth"):
+                    radio.set_audio_bandwidth(int(data["bandwidth"]))
+                if data.get("deemphasis"):
+                    radio.set_audio_deemphasis(data["deemphasis"])
+                if data.get("tone") is not None:
+                    radio.set_audio_tone(float(data["tone"]))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        clients.discard(ws)
+
+
+@app.websocket("/ws/audio")
+async def ws_audio(ws: WebSocket):
+    await ws.accept()
+    audio_clients.add(ws)
+    radio.set_audio_enabled(True)
+    try:
+        await ws.send_text(json.dumps({
+            "type": "info", "audio_rate": demod.AUDIO_RATE, "channels": 1,
+        }))
+        while True:
+            text = await ws.receive_text()
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            t = data.get("type")
+            if t == "mode":
+                radio.set_audio_mode(data.get("mode", config.DEFAULT_DEMOD))
+            elif t == "config":
+                radio.set_audio_mode(data.get("mode", config.DEFAULT_DEMOD))
+                if data.get("bandwidth"):
+                    radio.set_audio_bandwidth(int(data["bandwidth"]))
+                if data.get("deemphasis"):
+                    radio.set_audio_deemphasis(data["deemphasis"])
+                if data.get("tone") is not None:
+                    radio.set_audio_tone(float(data["tone"]))
+            elif t == "bandwidth":
+                if data.get("bandwidth"):
+                    radio.set_audio_bandwidth(int(data["bandwidth"]))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        audio_clients.discard(ws)
+        if not audio_clients:
+            radio.set_audio_enabled(False)
+
+
+# Static frontend (mounted last so /api and /ws take precedence).
+FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+app.mount("/", StaticFiles(directory=str(FRONTEND), html=True), name="frontend")
