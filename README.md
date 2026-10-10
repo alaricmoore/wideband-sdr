@@ -49,6 +49,7 @@ browsers.
 ## Contents
 
 - [Features](#features)
+- [Supported hardware](#supported-hardware)
 - [Quick start](#quick-start)
 - [Setting up Ollama](#setting-up-ollama)
 - [Testing](#testing)
@@ -79,6 +80,25 @@ browsers.
   - `characterize` — estimate bandwidth and likely modulation,
   - `set_demod_mode` / `set_bandwidth` / `set_sample_rate` / `set_gain` — full control,
   - and an "optimise the signal" flow that measures, corrects, re-measures, and reports.
+
+## Supported hardware
+
+Wideband-SDR currently supports **RTL-SDR dongles** (RTL2832U with an R820T/R828D
+tuner), accessed over the classic `rtl_tcp` protocol.
+
+Other devices such as the **Airspy HF+ Discovery**, Airspy R2/Mini, SDRplay, and
+HackRF are **not** currently supported. These use different drivers (`airspyhf`,
+SoapySDR, …) and, when served over a network, expose their own protocols (e.g.
+Airspy's `spyserver`) rather than `rtl_tcp`, so they can't simply be pointed at as an
+`SDR_HOST`.
+
+Adding support for other SDRs is feasible: the backend's only hardware interface is
+`backend/rtltcp.py`, and the radio core just reads raw I/Q and issues a few control
+calls (`set_center_freq`, `set_sample_rate`, `set_gain`). A new client implementing
+those methods — either a dedicated `airspyhf` client or a SoapySDR client (which
+would unlock many devices at once) — would slot in alongside it. Note that some
+devices (e.g. the HF+ Discovery) top out below the RTL-SDR's 2.4 MHz sample rate, so
+the visible spectrum span would be correspondingly narrower.
 
 ## Quick start
 
