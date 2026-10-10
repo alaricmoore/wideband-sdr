@@ -3,10 +3,33 @@
 [![CI](https://github.com/kasp0r/wideband-sdr/actions/workflows/ci.yml/badge.svg)](https://github.com/kasp0r/wideband-sdr/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A Dockerised web app that connects to an **rtl_tcp** SDR server (e.g. an RTL-SDR dongle),
-streams a live spectrum/waterfall to the browser, demodulates audio you can listen to,
-and adds an **Ollama**-powered assistant
-that can control the radio, scan bands, and help identify and optimise signals.
+Wideband-SDR turns a cheap **RTL-SDR** USB dongle into a web radio you can tune from any
+browser. Plug in a dongle, point the app at it, and you get:
+
+- a **live spectrum and waterfall** — a moving picture of the radio spectrum around your
+  tuned frequency, so you can *see* stations and signals,
+- **audio** you can actually listen to — FM broadcast, AM, air traffic, ham bands, and
+  more,
+- an **AI assistant** you can ask in plain English ("find the strongest FM stations",
+  "what am I hearing right now?") that drives the radio for you.
+
+No specialised radio hardware beyond the dongle is needed, and the whole thing runs in a
+single Docker container.
+
+### New to SDR?
+
+*Software-defined radio (SDR)* means the tuning and decoding that used to live in
+physical radio circuits now happens in software. An **RTL-SDR** is a ~$25 USB stick
+(originally sold for digital TV) that becomes a general-purpose receiver covering roughly
+25 MHz – 1.7 GHz — enough for FM radio, air-traffic control, weather satellites, ham
+radio, and much more.
+
+### For experienced SDR users
+
+Wideband-SDR is a browser front end plus a FastAPI backend that speaks the classic
+**rtl_tcp** wire protocol directly (no `pyrtlsdr` dependency) and runs the DSP (FFT +
+demodulation) server-side. An **Ollama** tool-calling agent adds a natural-language control
+plane on top — `tune`, `scan`, `characterize`, `optimize`, and more.
 
 ```
 [Browser] ──WS──▶ [FastAPI backend] ──TCP──▶ rtl_tcp @ 127.0.0.1:1234
