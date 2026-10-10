@@ -3,12 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SDR AI Assist</title>
-  <link rel="stylesheet" href="style.css?v=22" />
+  <title>Wideband-SDR</title>
+  <script>
+    // Apply the saved theme before first paint to avoid a flash of the default.
+    try {
+      const t = localStorage.getItem("sdr-theme");
+      if (t) document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  </script>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="stylesheet" href="style.css?v=29" />
 </head>
 <body>
   <header id="topbar">
-    <div class="brand">📡 SDR AI Assist</div>
+    <div class="brand">WIDEBAND-SDR</div>
     <div class="status" id="status">disconnected</div>
     <div class="status-detail" id="statusDetail"></div>
     <div class="connect">
@@ -67,6 +75,19 @@
       <button id="recordBtn" title="Record audio to a WAV file">⏺ Record</button>
       <span id="recordIndicator"></span>
     </div>
+    <div class="theme">
+      <label>Theme</label>
+      <select id="themeSelect">
+        <option value="black">Black</option>
+        <option value="dark">Dark</option>
+        <option value="midnight">Midnight</option>
+        <option value="amber">Amber</option>
+        <option value="light">Light</option>
+        <option value="solarized">Solarized</option>
+        <option value="nord">Nord</option>
+        <option value="terminal">Terminal</option>
+      </select>
+    </div>
   </header>
 
   <main>
@@ -95,6 +116,14 @@
           <input type="range" id="scopeSlider" min="1" max="30" step="1" value="30" />
         </label>
         <span id="scopeValue">30 Hz</span>
+        <label title="Zoom into the spectrum. Smallest span is set by MIN_SPAN_HZ.">Zoom
+          <input type="range" id="zoomSlider" min="0" max="1000" step="1" value="1000" />
+        </label>
+        <span id="zoomValue">2.4M</span>
+        <label title="Temporal smoothing of the spectrum trace (reduces noise/spikiness).">Smooth
+          <input type="range" id="smoothSlider" min="0" max="100" step="1" value="0" />
+        </label>
+        <span id="smoothValue">0%</span>
         <button id="pauseBtn" title="Freeze the waterfall scroll.">⏸ Pause</button>
         <button id="grabBtn" title="Download the current waterfall image">📷 Grab</button>
       </div>
@@ -147,6 +176,6 @@
     </aside>
   </main>
 
-  <script src="app.js?v=22"></script>
+  <script src="app.js?v=29"></script>
 </body>
 </html>

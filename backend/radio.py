@@ -33,6 +33,7 @@ class Radio:
         self._reconnect_attempts = 0
 
         self.latest_spectrum = None
+        self._spectrum_data = None  # full-precision (freqs, power) for the AI helpers
         self.seq = 0
 
         # audio demodulation
@@ -253,16 +254,19 @@ class Radio:
                 freqs, power = dsp.compute_averaged_spectrum(
                     iq, self.sample_rate, config.FFT_SIZE, cf, config.AVERAGES
                 )
+                self._spectrum_data = (freqs, power)
                 self.latest_spectrum = {
                     "type": "spectrum",
                     "center_hz": cf,
                     "sample_rate": self.sample_rate,
+                    "min_span_hz": config.MIN_SPAN_HZ,
                     "demod_mode": self.audio_mode,
                     "bandwidth": self.effective_bandwidth(),
                     "band": dsp.band_context(cf),
                     "metrics": dsp.signal_metrics(freqs, power, cf),
-                    "freqs": freqs.astype(np.float64).tolist(),
-                    "power": power.astype(np.float64).tolist(),
+                    # freqs is reconstructed client-side; power rounded to keep
+                    # the per-frame JSON payload small at high FFT sizes.
+                    "power": np.round(power, 2).tolist(),
                 }
                 self.seq += 1
                 if self.audio_enabled:
@@ -276,18 +280,16 @@ class Radio:
 
     # ---- AI-facing helpers ----
     def get_signal_metrics(self):
-        if self.latest_spectrum is None:
+        if self._spectrum_data is None:
             return {"error": "no spectrum data yet"}
-        freqs = np.array(self.latest_spectrum["freqs"])
-        power = np.array(self.latest_spectrum["power"])
+        freqs, power = self._spectrum_data
         return dsp.signal_metrics(freqs, power, self.center_freq)
 
     def spectrum_snapshot(self, top_n=20, threshold_db=10.0):
         """Text-friendly summary of current spectrum: strongest peaks."""
-        if self.latest_spectrum is None:
+        if self._spectrum_data is None:
             return {"error": "no spectrum data yet"}
-        freqs = np.array(self.latest_spectrum["freqs"])
-        power = np.array(self.latest_spectrum["power"])
+        freqs, power = self._spectrum_data
         peaks, noise_floor = dsp.find_peaks(freqs, power, threshold_db)
         peaks.sort(key=lambda p: -p["power_db"])
         for p in peaks[:top_n]:

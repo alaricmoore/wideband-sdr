@@ -1,6 +1,20 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --border: #1f1f1f;
+  --text: #e6e6e6;
+  --muted: #999999;
+  --accent: #2f81f7;
+  --green: #3fb950;
+  --red: #f85149;
+  --card: #141414;
+  --card-hover: #262626;
+  --band: #ffd166;
+}
+
+:root[data-theme="dark"] {
   --bg: #0d1117;
   --panel: #161b22;
   --border: #30363d;
@@ -9,6 +23,93 @@
   --accent: #2f81f7;
   --green: #3fb950;
   --red: #f85149;
+  --card: #21262d;
+  --card-hover: #30363d;
+  --band: #ffd166;
+}
+
+:root[data-theme="midnight"] {
+  --bg: #0a0e1a;
+  --panel: #101624;
+  --border: #1e2a44;
+  --text: #d7e0f5;
+  --muted: #7d8bad;
+  --accent: #5b9dff;
+  --green: #4cc38a;
+  --red: #ff6b6b;
+  --card: #182136;
+  --card-hover: #223052;
+  --band: #ffd166;
+}
+
+:root[data-theme="amber"] {
+  --bg: #0a0700;
+  --panel: #151005;
+  --border: #3d300a;
+  --text: #ffd98a;
+  --muted: #b09050;
+  --accent: #ffb347;
+  --green: #7fd86a;
+  --red: #ff7b5a;
+  --card: #1e1708;
+  --card-hover: #2e2410;
+  --band: #ffd166;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f4f5f7;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --muted: #656d76;
+  --accent: #0969da;
+  --green: #1a7f37;
+  --red: #cf222e;
+  --card: #eaeef2;
+  --card-hover: #dde3e8;
+  --band: #9a6700;
+}
+
+:root[data-theme="solarized"] {
+  --bg: #002b36;
+  --panel: #073642;
+  --border: #0e4c5c;
+  --text: #eee8d5;
+  --muted: #839496;
+  --accent: #268bd2;
+  --green: #859900;
+  --red: #dc322f;
+  --card: #073642;
+  --card-hover: #0e4c5c;
+  --band: #b58900;
+}
+
+:root[data-theme="nord"] {
+  --bg: #2e3440;
+  --panel: #3b4252;
+  --border: #434c5e;
+  --text: #d8dee9;
+  --muted: #81a1c1;
+  --accent: #88c0d0;
+  --green: #a3be8c;
+  --red: #bf616a;
+  --card: #434c5e;
+  --card-hover: #4c566a;
+  --band: #ebcb8b;
+}
+
+:root[data-theme="terminal"] {
+  --bg: #000800;
+  --panel: #001200;
+  --border: #0a3a0a;
+  --text: #33ff66;
+  --muted: #1f9c3f;
+  --accent: #00e64d;
+  --green: #0fa30f;
+  --red: #ff4d4d;
+  --card: #001a00;
+  --card-hover: #0a2a0a;
+  --band: #7dff9a;
 }
 
 body {
@@ -46,6 +147,11 @@ header .connect, header .freq, header .gain, header .samplerate, header .audio {
   display: flex; align-items: center; gap: 5px;
   font-size: 12px; color: var(--muted);
 }
+header .theme {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--muted);
+}
 input, select, button {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -57,8 +163,8 @@ input, select, button {
 #host { width: 110px; }
 #port { width: 60px; }
 #freqInput { width: 110px; }
-button { cursor: pointer; background: #21262d; }
-button:hover { background: #30363d; border-color: #8b949e; }
+button { cursor: pointer; background: var(--card); }
+button:hover { background: var(--card-hover); border-color: var(--muted); }
 #listenBtn.listening { background: var(--red); color: #fff; border-color: var(--red); }
 #recordBtn.recording { background: var(--red); color: #fff; border-color: var(--red); }
 #recordIndicator {
@@ -190,7 +296,7 @@ main {
 #signalDot.locked { background: var(--green); }
 #signalStatus { color: var(--muted); font-size: 11px; }
 #bandChip {
-  color: #ffd166;
+  color: var(--band);
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
@@ -254,7 +360,7 @@ main {
 #favoritesHeader .count {
   color: var(--muted);
   font-size: 11px;
-  background: #21262d;
+  background: var(--card);
   border-radius: 9px;
   padding: 0 7px;
 }
@@ -277,22 +383,22 @@ main {
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: #30363d #161b22;
+  scrollbar-color: var(--card-hover) var(--panel);
 }
 #favoritesList::-webkit-scrollbar {
   width: 10px;
 }
 #favoritesList::-webkit-scrollbar-track {
-  background: #161b22;
+  background: var(--panel);
   border-radius: 5px;
 }
 #favoritesList::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: var(--card-hover);
   border-radius: 5px;
-  border: 2px solid #161b22;
+  border: 2px solid var(--panel);
 }
 #favoritesList::-webkit-scrollbar-thumb:hover {
-  background: #484f58;
+  background: var(--muted);
 }
 #favoritesList.collapsed { display: none; }
 .fav-empty {
@@ -311,7 +417,7 @@ main {
   flex-direction: column;
   align-items: flex-start;
   gap: 1px;
-  background: #21262d;
+  background: var(--card);
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 4px 8px;
@@ -319,7 +425,7 @@ main {
   text-align: left;
   min-width: 0;
 }
-.fav-main:hover { background: #30363d; }
+.fav-main:hover { background: var(--card-hover); }
 .fav-name {
   color: var(--text);
   font-size: 12px;
@@ -362,7 +468,7 @@ main {
   border-top: 1px solid var(--border);
 }
 .chip {
-  background: #21262d;
+  background: var(--card);
   border: 1px solid var(--border);
   color: var(--muted);
   border-radius: 12px;
@@ -370,7 +476,7 @@ main {
   font-size: 11px;
   cursor: pointer;
 }
-.chip:hover { background: #30363d; color: var(--text); border-color: #8b949e; }
+.chip:hover { background: var(--card-hover); color: var(--text); border-color: var(--muted); }
 #chatLog {
   flex: 1;
   overflow-y: auto;
@@ -381,8 +487,8 @@ main {
 }
 .msg { max-width: 90%; padding: 8px 11px; border-radius: 10px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
 .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
-.msg.ai { align-self: flex-start; background: #21262d; border: 1px solid var(--border); }
-.msg.tool { align-self: flex-start; background: #1a2333; color: var(--muted); font-size: 11px; border: 1px dashed var(--border); }
+.msg.ai { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
+.msg.tool { align-self: flex-start; background: var(--card); color: var(--muted); font-size: 11px; border: 1px dashed var(--border); }
 .msg.error { align-self: flex-start; background: #3b1a1a; color: #ffb3b3; }
 
 #chatInputRow { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }

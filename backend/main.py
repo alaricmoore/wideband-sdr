@@ -18,7 +18,7 @@ from radio import Radio
 
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="SDR AI Assist")
+app = FastAPI(title="Wideband-SDR")
 radio = Radio()
 
 clients: set[WebSocket] = set()

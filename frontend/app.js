@@ -34,6 +34,10 @@ const speedSlider = $("speedSlider");
 const speedValue = $("speedValue");
 const scopeSlider = $("scopeSlider");
 const scopeValue = $("scopeValue");
+const zoomSlider = $("zoomSlider");
+const zoomValue = $("zoomValue");
+const smoothSlider = $("smoothSlider");
+const smoothValue = $("smoothValue");
 const pauseBtn = $("pauseBtn");
 const grabBtn = $("grabBtn");
 const timeAxisToggle = $("timeAxisToggle");
@@ -56,6 +60,27 @@ const toneValue = $("toneValue");
 const volSlider = $("volSlider");
 const volValue = $("volValue");
 
+// ---------- theme ----------
+const themeSelect = $("themeSelect");
+
+function applyTheme(theme) {
+  const valid = [...themeSelect.options].some((o) => o.value === theme);
+  if (!valid) theme = "black";
+  document.documentElement.setAttribute("data-theme", theme);
+  themeSelect.value = theme;
+}
+
+try {
+  const saved = localStorage.getItem("sdr-theme");
+  if (saved) applyTheme(saved);
+} catch (e) { /* ignore */ }
+
+themeSelect.addEventListener("change", () => {
+  const t = themeSelect.value;
+  document.documentElement.setAttribute("data-theme", t);
+  try { localStorage.setItem("sdr-theme", t); } catch (e) { /* ignore */ }
+});
+
 const sctx = spectrumCanvas.getContext("2d");
 const wctx = waterfallCanvas.getContext("2d");
 
@@ -64,6 +89,11 @@ let centerHz = 100000000;
 let sampleRate = 2400000;
 let freqs = [];
 let power = [];
+let viewSpan = 2400000; // displayed frequency span (Hz); a zoomed slice of the sample rate
+let minSpanHz = 250000; // smallest allowed zoom span (from backend MIN_SPAN_HZ)
+let lastSampleRate = 2400000; // detect sample-rate changes so we can reset zoom
+let smoothing = 0; // 0..1 temporal smoothing of the spectrum trace (0 = off)
+let smoothBuf = null; // EMA buffer for smoothing
 let connected = false;
 let prevConnected = null; // for activity-log connection transitions
 let recentHosts = loadRecentHosts();
@@ -146,8 +176,7 @@ function fitCanvas(canvas) {
 // ---------- tune marker / passband overlay ----------
 function drawTuneOverlay(ctx, w, h, drawLabel) {
   const bw = audioBandwidth;
-  const span = sampleRate || 1;
-  const pw = Math.max(2, (bw / span) * w);
+  const pw = Math.max(2, (bw / (viewSpan || 1)) * w);
   const cx = w / 2;
 
   // passband (demod filter width)
@@ -187,16 +216,27 @@ function renderSpectrum() {
   if (!power.length) return;
 
   const n = power.length;
+  const bin = sampleRate / n;
+  const f0 = freqs[0];
+  const left = centerHz - viewSpan / 2;
+  const right = centerHz + viewSpan / 2;
+  let i0 = Math.max(0, Math.floor((left - f0) / bin));
+  const i1 = Math.min(n - 1, Math.ceil((right - f0) / bin));
+  if (i0 > i1) return;
+
+  const x0 = ((freqs[i0] - left) / viewSpan) * w;
+  const x1 = ((freqs[i1] - left) / viewSpan) * w;
+
   sctx.beginPath();
-  for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * w;
+  for (let i = i0; i <= i1; i++) {
+    const x = ((freqs[i] - left) / viewSpan) * w;
     const y = h - ((power[i] - minDb) / (maxDb - minDb)) * (h * 0.92) - h * 0.04;
-    if (i === 0) sctx.moveTo(x, y); else sctx.lineTo(x, y);
+    if (i === i0) sctx.moveTo(x, y); else sctx.lineTo(x, y);
   }
   sctx.strokeStyle = "#39d353";
   sctx.lineWidth = 1;
   sctx.stroke();
-  sctx.lineTo(w, h); sctx.lineTo(0, h); sctx.closePath();
+  sctx.lineTo(x1, h); sctx.lineTo(x0, h); sctx.closePath();
   sctx.fillStyle = "rgba(57, 211, 83, 0.08)";
   sctx.fill();
 
@@ -238,11 +278,16 @@ function renderWaterfall() {
     wfTimes.copyWithin(shift, 0, h - shift);
     const now = Date.now();
     // draw `shift` fresh rows at the top from the current spectrum
+    const bin = sampleRate / n;
+    const f0 = freqs[0];
+    const left = centerHz - viewSpan / 2;
     for (let r = 0; r < shift; r++) {
       wfTimes[r] = now;
       const base = r * rowBytes;
       for (let x = 0; x < w; x++) {
-        const i = Math.floor((x / w) * n);
+        const freq = left + (x / w) * viewSpan;
+        let i = Math.round((freq - f0) / bin);
+        if (i < 0) i = 0; else if (i >= n) i = n - 1;
         const [cr, cg, cb] = dbToColor(power[i]);
         const o = base + x * 4;
         data[o] = cr; data[o + 1] = cg; data[o + 2] = cb; data[o + 3] = 255;
@@ -321,7 +366,7 @@ function niceStep(span) {
 function renderAxis() {
   axisEl.innerHTML = "";
   if (!freqs.length) return;
-  const span = sampleRate;
+  const span = viewSpan;
   const left = centerHz - span / 2;
   const step = niceStep(span);
   const start = Math.ceil(left / step) * step;
@@ -358,6 +403,19 @@ function clientPeaks() {
   return peaks.slice(0, 8);
 }
 
+// ---------- spectrum smoothing ----------
+function applySmoothing() {
+  if (smoothing <= 0) { smoothBuf = null; return; }
+  const n = power.length;
+  if (!smoothBuf || smoothBuf.length !== n) {
+    smoothBuf = Float64Array.from(power);
+  } else {
+    const alpha = Math.max(0.05, 1 - smoothing);
+    for (let i = 0; i < n; i++) smoothBuf[i] += (power[i] - smoothBuf[i]) * alpha;
+  }
+  power = smoothBuf;
+}
+
 // ---------- WebSocket ----------
 let ws;
 function connectWS() {
@@ -366,10 +424,25 @@ function connectWS() {
   ws.onmessage = (ev) => {
     const d = JSON.parse(ev.data);
     if (d.type === "spectrum") {
+      const centerChanged = d.center_hz !== centerHz;
       centerHz = d.center_hz;
       sampleRate = d.sample_rate;
-      freqs = d.freqs;
       power = d.power;
+      // Rebuild the (uniformly spaced) frequency axis client-side instead of
+      // shipping one float per FFT bin over the wire every frame.
+      const n = power.length;
+      const bin = sampleRate / n;
+      const f0 = centerHz - sampleRate / 2;
+      freqs = new Float64Array(n);
+      for (let i = 0; i < n; i++) freqs[i] = f0 + i * bin;
+      if (d.min_span_hz != null) minSpanHz = Math.min(d.min_span_hz, sampleRate);
+      if (sampleRate !== lastSampleRate) {
+        lastSampleRate = sampleRate;
+        viewSpan = sampleRate; // reset zoom when the hardware span changes
+        configureZoomControls();
+      }
+      if (centerChanged) smoothBuf = null; // don't crossfade across a retune
+      applySmoothing();
       bandChip.textContent = d.band || "—";
       renderInspector(d.metrics);
       if (!document.activeElement || document.activeElement !== freqInput) {
@@ -400,7 +473,7 @@ function connectWS() {
 function freqFromEvent(e, canvas) {
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
-  const span = sampleRate;
+  const span = viewSpan;
   const left = centerHz - span / 2;
   return Math.round(left + (x / rect.width) * span);
 }
@@ -413,7 +486,10 @@ function tune(freq) {
 
 function nearestPeak(freqHz) {
   if (!power.length) return null;
-  const thr = Math.max(audioBandwidth, sampleRate * 0.01);
+  // Snap only within a small fraction of the *visible* span (a few pixels),
+  // not the full demod bandwidth / sample rate. Otherwise a zoomed-in click
+  // jumps to a peak up to the whole demod bandwidth away (or off-screen).
+  const thr = Math.max(viewSpan * 0.02, (sampleRate / power.length) * 2);
   let best = null, bestD = Infinity;
   for (const p of clientPeaks()) {
     const d = Math.abs(p.freq - freqHz);
@@ -472,19 +548,56 @@ function bindCanvasInteractions(canvas) {
 
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const opts = [...srSelect.options].map((o) => Number(o.value));
-    const idx = opts.indexOf(sampleRate);
-    const next = e.deltaY < 0 ? idx - 1 : idx + 1; // scroll up = zoom in (smaller SR)
-    if (next >= 0 && next < opts.length && next !== idx) {
-      sampleRate = opts[next];
-      srSelect.value = String(opts[next]);
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: "sample_rate", sample_rate: opts[next] }));
-      }
-      updateStatusDetail();
-    }
+    const factor = e.deltaY < 0 ? 1 / 1.25 : 1.25; // scroll up = zoom in
+    setZoom(viewSpan * factor);
   }, { passive: false });
+
+  canvas.addEventListener("dblclick", () => { setZoom(sampleRate); });
 }
+
+// ---------- zoom (display span) ----------
+const ZOOM_SLIDER_STEPS = 1000;
+
+function spanToSlider(span) {
+  const lo = Math.log(Math.max(minSpanHz, 1));
+  const hi = Math.log(Math.max(sampleRate, 1));
+  if (hi <= lo) return 0;
+  const t = (Math.log(Math.max(span, 1)) - lo) / (hi - lo);
+  return Math.round(Math.min(1, Math.max(0, t)) * ZOOM_SLIDER_STEPS);
+}
+
+function sliderToSpan(v) {
+  const lo = Math.log(Math.max(minSpanHz, 1));
+  const hi = Math.log(Math.max(sampleRate, 1));
+  return Math.exp(lo + (Number(v) / ZOOM_SLIDER_STEPS) * (hi - lo));
+}
+
+function setZoom(span) {
+  span = Math.min(sampleRate, Math.max(minSpanHz, span));
+  if (span === viewSpan) return;
+  viewSpan = span;
+  updateZoomControls();
+  renderSpectrum();
+  renderWaterfall();
+  renderAxis();
+}
+
+function updateZoomControls() {
+  zoomSlider.value = spanToSlider(viewSpan);
+  zoomValue.textContent = fmtHz(viewSpan);
+  zoomValue.title = "span " + fmtHz(viewSpan) + " · min " + fmtHz(minSpanHz);
+}
+
+function configureZoomControls() {
+  minSpanHz = Math.min(minSpanHz, sampleRate);
+  zoomSlider.min = 0;
+  zoomSlider.max = ZOOM_SLIDER_STEPS;
+  updateZoomControls();
+}
+
+zoomSlider.addEventListener("input", () => {
+  setZoom(sliderToSpan(zoomSlider.value));
+});
 
 function tuneFromInput() {
   const mhz = Number(freqInput.value);
@@ -559,6 +672,8 @@ gainSelect.addEventListener("change", () => {
 srSelect.addEventListener("change", () => {
   const sr = Number(srSelect.value);
   sampleRate = sr;
+  viewSpan = sr; // reset zoom to the new full width
+  configureZoomControls();
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "sample_rate", sample_rate: sr }));
   updateStatusDetail();
   addActivity("sample rate → " + fmtHz(sr));
@@ -872,7 +987,7 @@ function encodeWav(chunks, sampleRate, meta) {
     if (meta.title) info.push(["INAM", meta.title]);
     if (meta.comment) info.push(["ICMT", meta.comment]);
     if (meta.date) info.push(["ICRD", meta.date]);
-    info.push(["ISFT", "SDR AI Assist"]);
+    info.push(["ISFT", "Wideband-SDR"]);
   }
   let listSize = 0;
   if (info.length) {
@@ -1062,6 +1177,11 @@ scopeSlider.addEventListener("input", () => {
   updateWfReadouts();
   persistSettings();
 });
+smoothSlider.addEventListener("input", () => {
+  smoothing = Number(smoothSlider.value) / 100;
+  smoothValue.textContent = smoothSlider.value + "%";
+  persistSettings();
+});
 pauseBtn.addEventListener("click", () => {
   wfPaused = !wfPaused;
   pauseBtn.textContent = wfPaused ? "▶ Resume" : "⏸ Pause";
@@ -1214,6 +1334,7 @@ const DEFAULT_SETTINGS = {
   audioBandwidth: 200000,
   gain: "auto",
   deemphasis: "75us",
+  smoothing: 0,
 };
 
 function loadSettings() {
@@ -1227,7 +1348,7 @@ function loadSettings() {
 
 function persistSettings() {
   localStorage.setItem("sdr-settings", JSON.stringify({
-    minDb, wfSpeed, spectrumRate, tone, volume,
+    minDb, wfSpeed, spectrumRate, smoothing, tone, volume,
     demodMode, audioBandwidth, gain, deemphasis,
   }));
 }
@@ -1243,10 +1364,12 @@ function applySettings() {
   audioBandwidth = s.audioBandwidth;
   gain = s.gain;
   deemphasis = s.deemphasis;
+  smoothing = s.smoothing;
 
   floorSlider.value = minDb;
   speedSlider.value = wfSpeed;
   scopeSlider.value = spectrumRate;
+  smoothSlider.value = Math.round(smoothing * 100);
   toneSlider.value = tone;
   volSlider.value = volume;
   demodSelect.value = demodMode;
@@ -1259,6 +1382,7 @@ function applySettings() {
   floorValue.textContent = Math.round(minDb) + " dB";
   speedValue.textContent = wfSpeed + "×";
   scopeValue.textContent = spectrumRate + " Hz";
+  smoothValue.textContent = Math.round(smoothing * 100) + "%";
   toneValue.textContent = tone === 0 ? "flat" : (tone > 0 ? "+" : "") + (tone * 6).toFixed(1) + " dB";
   volValue.textContent = Math.round(volume * 100) + "%";
   bwValue.textContent = fmtHz(audioBandwidth);
@@ -1274,6 +1398,7 @@ window.addEventListener("resize", () => {
 fitCanvas(spectrumCanvas);
 fitCanvas(waterfallCanvas);
 applySettings();
+configureZoomControls();
 renderLegend();
 updateWfReadouts();
 renderFavorites();

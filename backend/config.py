@@ -14,8 +14,9 @@ def _float(name, default):
 SDR_HOST = os.environ.get("SDR_HOST", "127.0.0.1")
 SDR_PORT = _int("SDR_PORT", 1234)
 SAMPLE_RATE = _int("SAMPLE_RATE", 2_400_000)
-FFT_SIZE = _int("FFT_SIZE", 2048)
-AVERAGES = _int("AVERAGES", 4)          # FFT frames averaged per update
+FFT_SIZE = _int("FFT_SIZE", 8192)
+AVERAGES = _int("AVERAGES", 2)          # FFT frames averaged per update
+MIN_SPAN_HZ = _int("MIN_SPAN_HZ", 250_000)  # smallest zoom span in the UI
 DEFAULT_FREQ = _int("DEFAULT_FREQ", 100_000_000)  # 100 MHz
 DEFAULT_GAIN = os.environ.get("DEFAULT_GAIN", "auto")
 DEFAULT_DEMOD = os.environ.get("DEFAULT_DEMOD", "wfm")

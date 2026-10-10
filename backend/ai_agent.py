@@ -6,8 +6,9 @@ import requests
 import config
 import dsp
 
-SYSTEM_PROMPT = """You are the operator assistant for a software-defined radio (RTL-SDR dongle
-served over rtl_tcp). You have tools to control the receiver and inspect the RF spectrum.
+SYSTEM_PROMPT = """You are the operator assistant for Wideband-SDR, a software-defined radio
+(RTL-SDR dongle served over rtl_tcp). You have tools to control the receiver and inspect the
+RF spectrum.
 
 Guidelines:
 - Use the tools to actually observe the radio rather than guessing.

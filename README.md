@@ -1,4 +1,4 @@
-# SDR AI Assist
+# Wideband-SDR
 
 A Dockerised web app that connects to an **rtl_tcp** SDR server (e.g. an RTL-SDR dongle),
 streams a live spectrum/waterfall to the browser, demodulates audio you can listen to,
@@ -16,10 +16,17 @@ The backend is the **single** client to `rtl_tcp` (rtl_tcp only accepts one clie
 time). It owns the radio, does the DSP, and multiplexes results out to any number of
 browsers.
 
+![Wideband-SDR](resources/screenshot.png)
+
 ## Features
 
 - **Live spectrum + waterfall** with a frequency axis, peak labels, click-to-tune, a
   centre/tuned-frequency line, and a passband overlay showing the demod filter width.
+  **Zoom** into any region with the mouse wheel or the zoom slider (double-click to
+  reset; smallest zoom set by `MIN_SPAN_HZ`), and **smooth** the trace with the Smooth
+  slider.
+- **Themes** — pick Black, Dark, Midnight, Amber, Light, Solarized, Nord, or Terminal
+  (phosphor-green) from the top-right selector; your choice is remembered.
 - **Audio demodulation** — AM / NBFM / WFM / USB / LSB, with a bandwidth control, volume,
   FM de-emphasis (50/75 µs), and a soft limiter to reduce clipping.
 - **AI assistant** (Ollama tool-calling) that can *control* the radio and *reason* about
@@ -71,6 +78,32 @@ OLLAMA_URL=http://localhost:11434 uvicorn main:app --host 0.0.0.0 --port 8000
 > `backend/rtltcp.py`) — it does *not* depend on `pyrtlsdr`, whose
 > `RtlSdrTcpClient` uses an incompatible JSON protocol meant for its own server.
 
+## Setting up Ollama
+
+The AI assistant uses [Ollama](https://ollama.com) to run a local model that can call
+tools (tune, scan, characterize, …).
+
+1. Install Ollama: <https://ollama.com/download>
+   (Linux: `curl -fsSL https://ollama.com/install.sh | sh`).
+2. Pull a **tool-capable** model, e.g.:
+
+   ```bash
+   ollama pull gemma4          # or llama3.1, qwen2.5, …
+   ```
+
+   The model must support **function/tool calling** — most modern models do, but very
+   small or legacy models may not.
+3. Confirm it's running:
+
+   ```bash
+   ollama list      # lists pulled models
+   ollama serve     # starts the API server (default http://localhost:11434)
+   ```
+
+The app connects to `OLLAMA_URL` (default `http://localhost:11434`) with `OLLAMA_MODEL`
+(default `gemma4:latest`). You can also switch models live via the dropdown in the
+assistant header.
+
 ## Testing
 
 ```bash
@@ -91,8 +124,9 @@ AI tool dispatch.
 | `SDR_HOST`        | `127.0.0.1`       | rtl_tcp host |
 | `SDR_PORT`        | `1234`            | rtl_tcp port |
 | `SAMPLE_RATE`     | `2400000`         | SDR sample rate |
-| `FFT_SIZE`        | `2048`            | FFT bins per frame |
-| `AVERAGES`        | `4`               | frames averaged per update |
+| `FFT_SIZE`        | `8192`            | FFT bins per frame |
+| `AVERAGES`        | `2`               | frames averaged per update |
+| `MIN_SPAN_HZ`     | `250000`          | smallest zoom span in the UI (Hz) |
 | `DEFAULT_FREQ`    | `100000000`       | startup frequency (Hz) |
 | `DEFAULT_GAIN`    | `auto`            | startup gain |
 | `DEFAULT_DEMOD`   | `wfm`             | startup demodulation mode |
@@ -141,10 +175,10 @@ cd sdr-server-stack
 ./sdr status            # confirm it's running and on which port
 ```
 
-Then point SDR AI Assist at it by setting `SDR_HOST` to the SDR host's address and
+Then point Wideband-SDR at it by setting `SDR_HOST` to the SDR host's address and
 `SDR_PORT` to the port assigned in `sdr.conf` (the first dongle defaults to `1234`,
-the next to `1235`, and so on). To serve several dongles at once, run one SDR AI
-Assist instance per port, or switch dongles by changing `SDR_PORT`.
+the next to `1235`, and so on). To serve several dongles at once, run one Wideband-SDR
+instance per port, or switch dongles by changing `SDR_PORT`.
 
 ## API overview
 
@@ -152,8 +186,8 @@ Assist instance per port, or switch dongles by changing `SDR_PORT`.
 - `POST /api/connect` `{host, port}` / `POST /api/disconnect`.
 - `POST /api/tune` `{freq_hz}` / `POST /api/gain` `{gain}` / `POST /api/sample_rate`.
 - `POST /api/chat` `{message, history}` — one AI turn (agent loop with tools).
-- `WS /ws` — streams `{type:"spectrum", center_hz, sample_rate, demod_mode, bandwidth, freqs, power}`;
-  accepts `{type:"tune"|"gain"|"sample_rate"}` messages.
+- `WS /ws` — streams `{type:"spectrum", center_hz, sample_rate, min_span_hz, demod_mode, bandwidth, band, metrics, power}` (the `power` array is the spectrum; the frequency axis is uniform and reconstructed client-side);
+  accepts `{type:"tune"|"gain"|"sample_rate"|"freq_correction"|"config"}` messages.
 - `WS /ws/audio` — streams float32 mono PCM at 48 kHz; accepts
   `{type:"config", mode, bandwidth, deemphasis}` messages.
 

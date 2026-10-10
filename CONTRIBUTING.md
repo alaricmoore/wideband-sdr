@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing to SDR AI Assist!
+Thanks for your interest in contributing to Wideband-SDR!
 
 ## Development setup
 

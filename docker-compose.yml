@@ -1,7 +1,7 @@
 services:
-  sdr-ai-assist:
+  wideband-sdr:
     build: .
-    container_name: sdr-ai-assist
+    container_name: wideband-sdr
     # Host networking: the container's "localhost" == the host's localhost, so it
     # can reach Ollama at localhost:11434 (Ollama binds to 127.0.0.1 by default)
     # and the rtl_tcp server on the LAN. The app listens directly on host:8000.
