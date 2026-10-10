@@ -302,7 +302,7 @@ def _ollama_chat_stream(messages, model=None):
     )
     resp.raise_for_status()
 
-    tool_calls = {}  # index -> {"name": str, "arguments": str}
+    tool_calls = {}  # index -> {"name": str, "arguments": str | dict}
     for raw in resp.iter_lines():
         if not raw:
             continue
@@ -319,7 +319,11 @@ def _ollama_chat_stream(messages, model=None):
             entry = tool_calls.setdefault(idx, {"name": "", "arguments": ""})
             if fn.get("name"):
                 entry["name"] = fn["name"]
-            entry["arguments"] += fn.get("arguments", "")
+            arg = fn.get("arguments")
+            if isinstance(arg, str):
+                entry["arguments"] += arg
+            elif isinstance(arg, dict):
+                entry["arguments"] = arg
         if data.get("done"):
             break
 
@@ -327,10 +331,11 @@ def _ollama_chat_stream(messages, model=None):
     for idx in sorted(tool_calls):
         entry = tool_calls[idx]
         args = entry["arguments"]
-        try:
-            args = json.loads(args) if args else {}
-        except json.JSONDecodeError:
-            args = {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args else {}
+            except json.JSONDecodeError:
+                args = {}
         final_tool_calls.append({"function": {"name": entry["name"], "arguments": args}})
 
     if final_tool_calls:
@@ -393,20 +398,21 @@ def chat_stream(user_message, history, radio, model=None, max_tool_rounds=10):
 
     tools_called = []
     for _ in range(max_tool_rounds):
+        content = ""
+        tool_calls = None
         try:
-            gen = _ollama_chat_stream(messages, model)
+            for chunk in _ollama_chat_stream(messages, model):
+                if chunk["type"] == "token":
+                    content += chunk["text"]
+                    yield json.dumps({"type": "token", "text": chunk["text"]}) + "\n"
+                elif chunk["type"] == "tool_calls":
+                    tool_calls = chunk["tool_calls"]
         except requests.RequestException as e:
             yield json.dumps({"type": "error", "message": f"Could not reach Ollama: {e}"}) + "\n"
             return
-
-        content = ""
-        tool_calls = None
-        for chunk in gen:
-            if chunk["type"] == "token":
-                content += chunk["text"]
-                yield json.dumps({"type": "token", "text": chunk["text"]}) + "\n"
-            elif chunk["type"] == "tool_calls":
-                tool_calls = chunk["tool_calls"]
+        except Exception as e:  # noqa: BLE001
+            yield json.dumps({"type": "error", "message": f"Agent error: {e}"}) + "\n"
+            return
 
         assistant_msg = {"role": "assistant", "content": content}
         if tool_calls:
