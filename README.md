@@ -153,13 +153,15 @@ assistant header.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-pytest
+pytest                          # backend tests
+node --test tests/frontend.test.js   # frontend tests
 ```
 
-The suite (`tests/`) covers the DSP (FFT / peak detection / signal metrics), the
+The backend suite (`tests/`) covers the DSP (FFT / peak detection / signal metrics), the
 demodulators (synthetic AM/FM/SSB tones, bandwidth filtering, de-emphasis, soft limiter),
 the rtl_tcp wire protocol (mock server), and the
-AI tool dispatch.
+AI tool dispatch. The frontend tests cover the pure helpers in `frontend/lib.js`
+(markdown rendering, frequency formatting, Ollama URL parsing).
 
 ## Configuration (environment variables)
 
