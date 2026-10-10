@@ -3,7 +3,6 @@
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
-const statusDetailEl = $("statusDetail");
 const connectBtn = $("connectBtn");
 const hostInput = $("host");
 const portInput = $("port");
@@ -112,7 +111,6 @@ let spectrumRate = 30; // oscilloscope (spectrum) redraws per second
 let lastSpectrumDraw = 0;
 // favorites (user-saved frequencies)
 let favorites = loadFavorites();
-let favoritesOpen = true;
 const DEMOD_BW = { am: 16000, nbfm: 16000, wfm: 200000, usb: 2700, lsb: 2700 };
 const BW_RANGES = {
   am:   { min: 3000,  max: 20000,  step: 500 },
@@ -461,7 +459,6 @@ function connectWS() {
       renderSpectrumThrottled();
       renderWaterfall();
       renderAxis();
-      updateStatusDetail();
     }
   };
   ws.onopen = () => sendRadioConfig();
@@ -664,7 +661,6 @@ gainSelect.addEventListener("change", () => {
   const g = gainSelect.value;
   gain = g;
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "gain", gain: g }));
-  updateStatusDetail();
   addActivity("gain → " + g);
   persistSettings();
 });
@@ -675,7 +671,6 @@ srSelect.addEventListener("change", () => {
   viewSpan = sr; // reset zoom to the new full width
   configureZoomControls();
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "sample_rate", sample_rate: sr }));
-  updateStatusDetail();
   addActivity("sample rate → " + fmtHz(sr));
 });
 
@@ -711,15 +706,70 @@ async function refreshStatus() {
       const match = [...gainSelect.options].find((o) => o.value === s.gain);
       if (match) gainSelect.value = s.gain;
     }
-    updateStatusDetail();
   } catch (e) { /* ignore */ }
 }
 
 // ---------- chat ----------
+// ---------- minimal markdown rendering ----------
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderInline(s) {
+  s = escapeHtml(s);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) =>
+    /^https?:\/\//i.test(url)
+      ? `<a href="${url}" target="_blank" rel="noopener">${text}</a>`
+      : text);
+  return s;
+}
+
+function renderMarkdown(text) {
+  if (!text) return "";
+  const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let list = null;
+  const closeList = () => { if (list) { out.push(list === "ul" ? "</ul>" : "</ol>"); list = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      closeList();
+      const code = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
+      out.push("<pre><code>" + escapeHtml(code.join("\n")) + "</code></pre>");
+      continue;
+    }
+    const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
+    if (h) { closeList(); out.push(`<h${h[1].length}>${renderInline(h[2])}</h${h[1].length}>`); continue; }
+    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+    if (ul) {
+      if (list !== "ul") { closeList(); out.push("<ul>"); list = "ul"; }
+      out.push(`<li>${renderInline(ul[1])}</li>`);
+      continue;
+    }
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (ol) {
+      if (list !== "ol") { closeList(); out.push("<ol>"); list = "ol"; }
+      out.push(`<li>${renderInline(ol[1])}</li>`);
+      continue;
+    }
+    if (line.trim() === "") { closeList(); continue; }
+    closeList();
+    out.push(`<p>${renderInline(line)}</p>`);
+  }
+  closeList();
+  return out.join("\n");
+}
+
 function addMsg(text, role) {
   const d = document.createElement("div");
   d.className = "msg " + role;
-  d.textContent = text;
+  if (role === "ai") d.innerHTML = renderMarkdown(text);
+  else d.textContent = text;
   chatLog.appendChild(d);
   chatLog.scrollTop = chatLog.scrollHeight;
   return d;
@@ -760,13 +810,13 @@ async function sendChat() {
 
         if (ev.type === "token") {
           reply += ev.text;
-          aiMsg.textContent = reply;
+          aiMsg.innerHTML = renderMarkdown(reply);
         } else if (ev.type === "tool") {
           tools.push(ev.name);
           if (!toolMsg) toolMsg = addMsg("", "tool");
           toolMsg.textContent = "🔧 " + tools.join(", ") + "…";
         } else if (ev.type === "done") {
-          if (ev.reply) { reply = ev.reply; aiMsg.textContent = reply; }
+          if (ev.reply) { reply = ev.reply; aiMsg.innerHTML = renderMarkdown(reply); }
         } else if (ev.type === "error") {
           aiMsg.textContent = "⚠️ " + ev.message;
           reply = "";
@@ -817,28 +867,126 @@ function restoreChatHistory() {
   }
 }
 
-// ---- model selector ----
-async function loadModels() {
+// ---- AI model + Ollama connection ----
+const ollamaHost = $("ollamaHost");
+const ollamaPort = $("ollamaPort");
+const ollamaConnectBtn = $("ollamaConnectBtn");
+const ollamaStatusEl = $("ollamaStatus");
+const OLLAMA_STORAGE_KEY = "sdr-ollama";
+
+function saveOllamaSettings() {
   try {
-    const r = await fetch("/api/models").then((r) => r.json());
-    const models = r.models || [];
-    const prev = selectedModel || modelSelect.value;
-    modelSelect.innerHTML = "";
-    for (const m of models) {
-      const o = document.createElement("option");
-      o.value = m;
-      o.textContent = m;
-      modelSelect.appendChild(o);
-    }
-    if (prev && models.includes(prev)) modelSelect.value = prev;
+    localStorage.setItem(OLLAMA_STORAGE_KEY, JSON.stringify({
+      host: ollamaHost.value.trim(),
+      port: ollamaPort.value.trim(),
+      model: selectedModel,
+    }));
+  } catch (e) { /* ignore */ }
+}
+
+function loadOllamaSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(OLLAMA_STORAGE_KEY) || "{}");
   } catch (e) {
-    // leave the dropdown empty on failure
+    return {};
+  }
+}
+
+function parseOllamaUrl(url) {
+  try {
+    const u = new URL(url || "http://127.0.0.1:11434");
+    return { host: u.hostname, port: u.port || "11434" };
+  } catch (e) {
+    return { host: "127.0.0.1", port: "11434" };
+  }
+}
+
+function setOllamaStatus(connected, detail) {
+  ollamaStatusEl.classList.toggle("connected", connected);
+  ollamaStatusEl.classList.toggle("disconnected", !connected);
+  ollamaStatusEl.textContent = connected ? "● connected" : "● disconnected";
+  ollamaStatusEl.title = connected
+    ? "Ollama connected"
+    : "Ollama unreachable" + (detail ? ": " + detail : "");
+}
+
+function populateModels(models, preferred) {
+  modelSelect.innerHTML = "";
+  for (const m of models) {
+    const o = document.createElement("option");
+    o.value = m;
+    o.textContent = m;
+    modelSelect.appendChild(o);
+  }
+  // Select the saved model if available, else the preferred (backend) model,
+  // else the first available model.
+  const saved = loadOllamaSettings().model;
+  let choice = "";
+  if (saved && models.includes(saved)) choice = saved;
+  else if (preferred && models.includes(preferred)) choice = preferred;
+  else if (models.length) choice = models[0];
+  if (choice) {
+    modelSelect.value = choice;
+    selectedModel = choice;
+  }
+}
+
+function applyOllamaStatus(s) {
+  const { host, port } = parseOllamaUrl(s.url);
+  ollamaHost.value = host;
+  ollamaPort.value = port;
+  setOllamaStatus(s.connected, s.error);
+  populateModels(s.models || [], s.model);
+}
+
+async function refreshOllamaStatus() {
+  try {
+    const s = await fetch("/api/ollama/status").then((r) => r.json());
+    applyOllamaStatus(s);
+  } catch (e) {
+    setOllamaStatus(false, "backend unreachable");
+  }
+}
+
+async function connectOllama() {
+  const host = ollamaHost.value.trim();
+  const port = ollamaPort.value.trim();
+  if (!host) return;
+  const url = "http://" + host + (port ? ":" + port : "");
+  ollamaConnectBtn.disabled = true;
+  ollamaConnectBtn.textContent = "…";
+  try {
+    const r = await fetch("/api/ollama/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    }).then((res) => res.json());
+    applyOllamaStatus(r);
+    saveOllamaSettings();
+  } catch (e) {
+    setOllamaStatus(false, "request failed");
+  } finally {
+    ollamaConnectBtn.disabled = false;
+    ollamaConnectBtn.textContent = "Connect";
+  }
+}
+
+async function initOllama() {
+  const saved = loadOllamaSettings();
+  if (saved.host) {
+    ollamaHost.value = saved.host;
+    ollamaPort.value = saved.port || "11434";
+    connectOllama(); // restore the saved connection
+  } else {
+    refreshOllamaStatus();
   }
 }
 
 modelSelect.addEventListener("change", () => {
   selectedModel = modelSelect.value;
+  saveOllamaSettings();
 });
+
+ollamaConnectBtn.addEventListener("click", connectOllama);
 
 // ---- suggestion chips ----
 document.querySelectorAll(".chip").forEach((chip) => {
@@ -1135,13 +1283,6 @@ toneSlider.addEventListener("input", () => {
 });
 
 // ---------- waterfall / status controls ----------
-function updateStatusDetail() {
-  const parts = [(centerHz / 1e6).toFixed(3) + " MHz",
-                 "SR " + fmtHz(sampleRate),
-                 "gain " + gain];
-  statusDetailEl.textContent = parts.join(" · ");
-}
-
 function updateWfReadouts() {
   floorValue.textContent = Math.round(minDb) + " dB";
   speedValue.textContent = wfSpeed + "×";
@@ -1317,12 +1458,6 @@ saveBtn.addEventListener("click", () => {
   addFavorite(name.trim() || def);
 });
 
-favoritesHeader.addEventListener("click", () => {
-  favoritesOpen = !favoritesOpen;
-  favoritesList.classList.toggle("collapsed", !favoritesOpen);
-  favoritesToggle.textContent = favoritesOpen ? "−" : "+";
-});
-
 // ---------- settings persistence ----------
 const DEFAULT_SETTINGS = {
   minDb: -60,
@@ -1388,6 +1523,108 @@ function applySettings() {
   bwValue.textContent = fmtHz(audioBandwidth);
 }
 
+// ---------- drawers (collapsible right-hand panes) ----------
+const infoHeader = $("infoHeader");
+const infoBody = $("infoBody");
+const signalToggle = $("signalToggle");
+const activityHeader = $("activityHeader");
+const activityToggle = $("activityToggle");
+
+function setupDrawer(headerEl, bodyEl, toggleEl) {
+  let open = true;
+  headerEl.addEventListener("click", () => {
+    open = !open;
+    bodyEl.classList.toggle("collapsed", !open);
+    toggleEl.textContent = open ? "−" : "+";
+  });
+}
+
+setupDrawer(infoHeader, infoBody, signalToggle);
+setupDrawer(activityHeader, activityLog, activityToggle);
+setupDrawer(favoritesHeader, favoritesList, favoritesToggle);
+
+// ---------- draggable panel ordering ----------
+function initDraggablePanels() {
+  const chatPane = $("chatPane");
+  const panelEls = ["infoPanel", "activityPanel", "favoritesPanel", "aiPanel"].map((id) => $(id));
+  let dragged = null;
+
+  function saveOrder() {
+    try {
+      localStorage.setItem("sdr-panel-order", JSON.stringify(panelEls.map((p) => p.id)));
+    } catch (e) { /* ignore */ }
+  }
+
+  function restoreOrder() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("sdr-panel-order") || "[]");
+      if (!Array.isArray(saved)) return;
+      const ids = panelEls.map((p) => p.id);
+      if (saved.length !== ids.length || !saved.every((id) => ids.includes(id))) return;
+      for (const id of saved) {
+        chatPane.appendChild(panelEls.find((p) => p.id === id));
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  for (const panel of panelEls) {
+    const handle = panel.firstElementChild; // the header is the first child
+    handle.draggable = true;
+
+    handle.addEventListener("dragstart", (e) => {
+      dragged = panel;
+      panel.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", panel.id); } catch (err) { /* ignore */ }
+    });
+
+    handle.addEventListener("dragend", () => {
+      dragged = null;
+      for (const p of panelEls) p.classList.remove("dragging", "drag-over");
+      saveOrder();
+    });
+
+    panel.addEventListener("dragover", (e) => {
+      if (!dragged || dragged === panel) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      for (const p of panelEls) p.classList.remove("drag-over");
+      panel.classList.add("drag-over");
+    });
+
+    panel.addEventListener("drop", (e) => {
+      if (!dragged || dragged === panel) return;
+      e.preventDefault();
+      const rect = panel.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      chatPane.insertBefore(dragged, before ? panel : panel.nextElementSibling);
+      panel.classList.remove("drag-over");
+    });
+  }
+
+  restoreOrder();
+}
+
+initDraggablePanels();
+
+// ---------- audio controls toggle ----------
+const audioToggle = $("audioToggle");
+const audioRow = $("audioRow");
+
+function setAudioRow(open) {
+  audioRow.classList.toggle("collapsed", !open);
+  audioToggle.textContent = open ? "⏷ Audio" : "⏵ Audio";
+  try { localStorage.setItem("sdr-audio-row", open ? "1" : "0"); } catch (e) { /* ignore */ }
+}
+
+audioToggle.addEventListener("click", () => {
+  setAudioRow(audioRow.classList.contains("collapsed"));
+});
+
+try {
+  if (localStorage.getItem("sdr-audio-row") === "0") setAudioRow(false);
+} catch (e) { /* ignore */ }
+
 // ---------- init ----------
 bindCanvasInteractions(spectrumCanvas);
 bindCanvasInteractions(waterfallCanvas);
@@ -1412,4 +1649,4 @@ restoreChatHistory();
 refreshStatus();
 setInterval(refreshStatus, 2000);
 
-loadModels();
+initOllama();
