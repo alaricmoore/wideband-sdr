@@ -16,6 +16,7 @@ in-process mock rtl_tcp server.
 
 ```bash
 pytest
+node --test tests/frontend.test.js
 ```
 
 The suite (`tests/`) covers the DSP (FFT / peak detection / signal metrics), the

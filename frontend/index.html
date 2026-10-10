@@ -12,81 +12,85 @@
     } catch (e) {}
   </script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=29" />
+  <link rel="stylesheet" href="style.css?v=37" />
 </head>
 <body>
   <header id="topbar">
-    <div class="brand">WIDEBAND-SDR</div>
-    <div class="status" id="status">disconnected</div>
-    <div class="status-detail" id="statusDetail"></div>
-    <div class="connect">
-      <input id="host" value="127.0.0.1" placeholder="host" list="hostHistory" />
-      <input id="port" value="1234" placeholder="port" type="number" />
-      <button id="connectBtn">Connect</button>
-      <datalist id="hostHistory"></datalist>
+    <div id="topRow">
+      <div class="brand">WIDEBAND-SDR</div>
+      <div class="status" id="status">disconnected</div>
+      <div class="group">
+        <input id="host" value="127.0.0.1" placeholder="host" list="hostHistory" />
+        <input id="port" value="1234" placeholder="port" type="number" />
+        <button id="connectBtn">Connect</button>
+        <datalist id="hostHistory"></datalist>
+      </div>
+      <div class="group">
+        <label>Freq</label>
+        <input id="freqInput" type="number" step="0.001" value="100" />
+        <span class="hz">MHz</span>
+        <button id="tuneBtn">Tune</button>
+        <button id="saveBtn" title="Save current frequency as a favorite">★</button>
+      </div>
+      <button id="audioToggle" title="Toggle audio controls">⏷ Audio</button>
+      <div class="theme">
+        <label>Theme</label>
+        <select id="themeSelect">
+          <option value="black">Black</option>
+          <option value="dark">Dark</option>
+          <option value="midnight">Midnight</option>
+          <option value="amber">Amber</option>
+          <option value="light">Light</option>
+          <option value="solarized">Solarized</option>
+          <option value="nord">Nord</option>
+          <option value="terminal">Terminal</option>
+        </select>
+      </div>
     </div>
-    <div class="freq">
-      <label>Freq</label>
-      <input id="freqInput" type="number" step="0.001" value="100" />
-      <span class="hz">MHz</span>
-      <button id="tuneBtn">Tune</button>
-      <button id="saveBtn" title="Save current frequency as a favorite">★</button>
-    </div>
-    <div class="gain">
-      <label>Gain</label>
-      <select id="gainSelect">
-      </select>
-    </div>
-    <div class="samplerate">
-      <label>SR</label>
-      <select id="srSelect">
-        <option value="2400000">2.4M</option>
-        <option value="2048000">2.048M</option>
-        <option value="1200000">1.2M</option>
-        <option value="960000">960k</option>
-        <option value="250000">250k</option>
-      </select>
-    </div>
-    <div class="audio">
-      <label>Demod</label>
-      <select id="demodSelect">
-        <option value="nbfm">NBFM</option>
-        <option value="wfm" selected>WFM</option>
-        <option value="am">AM</option>
-        <option value="usb">USB</option>
-        <option value="lsb">LSB</option>
-      </select>
-      <label>BW</label>
-      <input type="range" id="bwSlider" min="500" max="250000" step="100" value="200000" />
-      <span id="bwValue">200.0k</span>
-      <label>Deemph</label>
-      <select id="deemphSelect">
-        <option value="75us" selected>75µs (Americas)</option>
-        <option value="50us">50µs (Europe)</option>
-        <option value="off">off</option>
-      </select>
-      <label>Tone</label>
-      <input type="range" id="toneSlider" min="-1" max="1" step="0.1" value="0" />
-      <span id="toneValue">flat</span>
-      <label>Vol</label>
-      <input type="range" id="volSlider" min="0" max="1.5" step="0.05" value="0.3" />
-      <span id="volValue">30%</span>
-      <button id="listenBtn">🔊 Listen</button>
-      <button id="recordBtn" title="Record audio to a WAV file">⏺ Record</button>
-      <span id="recordIndicator"></span>
-    </div>
-    <div class="theme">
-      <label>Theme</label>
-      <select id="themeSelect">
-        <option value="black">Black</option>
-        <option value="dark">Dark</option>
-        <option value="midnight">Midnight</option>
-        <option value="amber">Amber</option>
-        <option value="light">Light</option>
-        <option value="solarized">Solarized</option>
-        <option value="nord">Nord</option>
-        <option value="terminal">Terminal</option>
-      </select>
+    <div id="audioRow">
+      <div class="group">
+        <label>Gain</label>
+        <select id="gainSelect">
+        </select>
+      </div>
+      <div class="group">
+        <label>SR</label>
+        <select id="srSelect">
+          <option value="2400000">2.4M</option>
+          <option value="2048000">2.048M</option>
+          <option value="1200000">1.2M</option>
+          <option value="960000">960k</option>
+          <option value="250000">250k</option>
+        </select>
+      </div>
+      <div class="group">
+        <label>Demod</label>
+        <select id="demodSelect">
+          <option value="nbfm">NBFM</option>
+          <option value="wfm" selected>WFM</option>
+          <option value="am">AM</option>
+          <option value="usb">USB</option>
+          <option value="lsb">LSB</option>
+        </select>
+        <label>BW</label>
+        <input type="range" id="bwSlider" min="500" max="250000" step="100" value="200000" />
+        <span id="bwValue">200.0k</span>
+        <label>Deemph</label>
+        <select id="deemphSelect">
+          <option value="75us" selected>75µs (Americas)</option>
+          <option value="50us">50µs (Europe)</option>
+          <option value="off">off</option>
+        </select>
+        <label>Tone</label>
+        <input type="range" id="toneSlider" min="-1" max="1" step="0.1" value="0" />
+        <span id="toneValue">flat</span>
+        <label>Vol</label>
+        <input type="range" id="volSlider" min="0" max="1.5" step="0.05" value="0.3" />
+        <span id="volValue">30%</span>
+        <button id="listenBtn">🔊 Listen</button>
+        <button id="recordBtn" title="Record audio to a WAV file">⏺ Record</button>
+        <span id="recordIndicator"></span>
+      </div>
     </div>
   </header>
 
@@ -124,6 +128,16 @@
           <input type="range" id="smoothSlider" min="0" max="100" step="1" value="0" />
         </label>
         <span id="smoothValue">0%</span>
+        <label title="Waterfall color scheme.">Color
+          <select id="colormapSelect">
+            <option value="turbo">Turbo</option>
+            <option value="viridis">Viridis</option>
+            <option value="inferno">Inferno</option>
+            <option value="plasma">Plasma</option>
+            <option value="grayscale">Gray</option>
+            <option value="green">Green</option>
+          </select>
+        </label>
         <button id="pauseBtn" title="Freeze the waterfall scroll.">⏸ Pause</button>
         <button id="grabBtn" title="Download the current waterfall image">📷 Grab</button>
       </div>
@@ -136,20 +150,24 @@
           <span class="title">📶 Signal</span>
           <span class="dot" id="signalDot"></span>
           <span class="status-text" id="signalStatus">—</span>
+          <span class="drawer-toggle" id="signalToggle">−</span>
         </div>
-        <div id="bandChip" title="Current band">—</div>
-        <div id="inspector">
-          <div class="metric-row"><span class="label">SNR</span><span class="value" id="mSnr">—</span></div>
-          <div class="metric-row"><span class="label">Tune error</span><span class="value" id="mErr">—</span></div>
-          <div class="metric-row"><span class="label">Bandwidth</span><span class="value" id="mBw">—</span></div>
-          <div class="metric-row"><span class="label">Adjacent</span><span class="value" id="mAdj">—</span></div>
-          <div class="metric-row"><span class="label">Signals</span><span class="value" id="mSignals">—</span></div>
-          <div class="metric-row"><span class="label">Noise floor</span><span class="value" id="mFloor">—</span></div>
+        <div id="infoBody">
+          <div id="bandChip" title="Current band">—</div>
+          <div id="inspector">
+            <div class="metric-row"><span class="label">SNR</span><span class="value" id="mSnr">—</span></div>
+            <div class="metric-row"><span class="label">Tune error</span><span class="value" id="mErr">—</span></div>
+            <div class="metric-row"><span class="label">Bandwidth</span><span class="value" id="mBw">—</span></div>
+            <div class="metric-row"><span class="label">Adjacent</span><span class="value" id="mAdj">—</span></div>
+            <div class="metric-row"><span class="label">Signals</span><span class="value" id="mSignals">—</span></div>
+            <div class="metric-row"><span class="label">Noise floor</span><span class="value" id="mFloor">—</span></div>
+          </div>
         </div>
       </div>
       <div id="activityPanel">
         <div id="activityHeader">
           <span class="title">📋 Activity</span>
+          <span class="drawer-toggle" id="activityToggle">−</span>
         </div>
         <div id="activityLog"></div>
       </div>
@@ -161,7 +179,22 @@
         </div>
         <div id="favoritesList"></div>
       </div>
-      <div id="chatHeader">🤖 AI Assistant <select id="modelSelect" title="Ollama model"></select></div>
+      <div id="aiPanel">
+      <div id="chatHeader">
+        <span class="title">🤖 AI Assistant</span>
+        <span id="ollamaStatus">—</span>
+      </div>
+      <div id="ollamaBar">
+        <span class="label">Host</span>
+        <input id="ollamaHost" placeholder="127.0.0.1" title="Ollama host" />
+        <span class="sep">:</span>
+        <input id="ollamaPort" placeholder="11434" type="number" title="Ollama port" />
+        <button id="ollamaConnectBtn">Connect</button>
+      </div>
+      <div id="modelBar">
+        <span class="label">Model</span>
+        <select id="modelSelect" title="Ollama model"></select>
+      </div>
       <div id="chatLog"></div>
       <div id="chips">
         <button class="chip" data-prompt="Scan 88-108 MHz and find strong FM stations">Scan FM band</button>
@@ -173,9 +206,11 @@
         <textarea id="chatInput" placeholder="Ask about signals, or 'scan 88-108 MHz and find strong FM stations'"></textarea>
         <button id="chatSend">Send</button>
       </div>
+      </div>
     </aside>
   </main>
 
-  <script src="app.js?v=29"></script>
+  <script src="lib.js?v=1"></script>
+  <script src="app.js?v=38"></script>
 </body>
 </html>

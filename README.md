@@ -153,13 +153,15 @@ assistant header.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-pytest
+pytest                          # backend tests
+node --test tests/frontend.test.js   # frontend tests
 ```
 
-The suite (`tests/`) covers the DSP (FFT / peak detection / signal metrics), the
+The backend suite (`tests/`) covers the DSP (FFT / peak detection / signal metrics), the
 demodulators (synthetic AM/FM/SSB tones, bandwidth filtering, de-emphasis, soft limiter),
 the rtl_tcp wire protocol (mock server), and the
-AI tool dispatch.
+AI tool dispatch. The frontend tests cover the pure helpers in `frontend/lib.js`
+(markdown rendering, frequency formatting, Ollama URL parsing).
 
 ## Configuration (environment variables)
 
@@ -180,6 +182,8 @@ AI tool dispatch.
 | `RECONNECT_MAX_DELAY` | `30`          | reconnect backoff cap (seconds) |
 | `OLLAMA_URL`      | `http://localhost:11434` | Ollama API base |
 | `OLLAMA_MODEL`    | `gemma4:latest`   | model name (must support tools) |
+| `MAX_HISTORY_MESSAGES` | `40`          | max chat-history messages sent to the model |
+| `MAX_SIGNALS`     | `10`              | max signals returned per tool call |
 
 ## Running rtl_tcp
 

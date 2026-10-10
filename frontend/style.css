@@ -124,15 +124,25 @@ body {
 
 header {
   display: flex;
-  align-items: center;
-  gap: 16px;
+  flex-direction: column;
   padding: 8px 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
 }
 
 .brand { font-weight: 600; font-size: 15px; }
+#topRow, #audioRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+#audioRow {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+#audioRow.collapsed { display: none; }
 .status {
   font-size: 12px;
   padding: 3px 10px;
@@ -141,12 +151,16 @@ header {
   color: #fff;
 }
 .status.connected { background: var(--green); }
-.status-detail { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-header .connect, header .freq, header .gain, header .samplerate, header .audio {
+.group {
   display: flex; align-items: center; gap: 5px;
   font-size: 12px; color: var(--muted);
 }
+.group + .group {
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+}
+#audioToggle { white-space: nowrap; }
 header .theme {
   margin-left: auto;
   display: flex; align-items: center; gap: 5px;
@@ -285,6 +299,8 @@ main {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
 }
 #infoHeader .title { font-weight: 600; font-size: 13px; }
 #signalDot {
@@ -326,7 +342,12 @@ main {
   font-size: 12px;
 }
 #activityHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 4px;
+  cursor: pointer;
+  user-select: none;
 }
 #activityHeader .title { font-weight: 600; font-size: 12px; }
 #activityLog {
@@ -374,6 +395,15 @@ main {
   font-size: 14px;
 }
 #favoritesToggle:hover { color: var(--text); }
+.drawer-toggle {
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0 4px;
+  font-size: 14px;
+  user-select: none;
+}
+.drawer-toggle:hover { color: var(--text); }
 #favoritesList {
   display: flex;
   flex-direction: column;
@@ -401,6 +431,8 @@ main {
   background: var(--muted);
 }
 #favoritesList.collapsed { display: none; }
+#infoBody.collapsed { display: none; }
+#activityLog.collapsed { display: none; }
 .fav-empty {
   color: var(--muted);
   font-size: 11px;
@@ -449,16 +481,32 @@ main {
   border-radius: 5px;
 }
 .fav-remove:hover { color: var(--red); border-color: var(--border); }
-#chatHeader { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid var(--border); font-size: 14px; }
-#chatHeader { display: flex; align-items: center; gap: 8px; }
+#chatHeader { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 14px; cursor: grab; user-select: none; }
+#aiPanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+#infoHeader, #activityHeader, #favoritesHeader, #chatHeader { cursor: grab; }
+.dragging { opacity: 0.4; }
+.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+#chatHeader .title { font-weight: 600; }
+#ollamaStatus { margin-left: auto; font-size: 11px; white-space: nowrap; color: var(--muted); }
+#ollamaStatus.connected { color: var(--green); }
+#ollamaStatus.disconnected { color: var(--red); }
+#ollamaBar, #modelBar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--muted);
+}
+#ollamaBar .label, #modelBar .label { font-weight: 600; }
+#ollamaHost { width: 110px; }
+#ollamaPort { width: 64px; }
+#ollamaBar .sep { color: var(--muted); }
 #modelSelect {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 5px;
-  padding: 2px 6px;
-  font-size: 11px;
-  max-width: 180px;
+  flex: 1; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); border-radius: 5px; padding: 3px 6px; font-size: 11px;
 }
 #chips {
   display: flex;
@@ -490,6 +538,26 @@ main {
 .msg.ai { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
 .msg.tool { align-self: flex-start; background: var(--card); color: var(--muted); font-size: 11px; border: 1px dashed var(--border); }
 .msg.error { align-self: flex-start; background: #3b1a1a; color: #ffb3b3; }
+.msg.ai p { margin: 0 0 8px; }
+.msg.ai p:last-child { margin-bottom: 0; }
+.msg.ai ul, .msg.ai ol { margin: 4px 0 8px; padding-left: 20px; }
+.msg.ai li { margin: 2px 0; }
+.msg.ai h1, .msg.ai h2, .msg.ai h3, .msg.ai h4, .msg.ai h5, .msg.ai h6 { margin: 10px 0 4px; line-height: 1.25; }
+.msg.ai h1 { font-size: 15px; }
+.msg.ai h2 { font-size: 14px; }
+.msg.ai h3, .msg.ai h4, .msg.ai h5, .msg.ai h6 { font-size: 13px; }
+.msg.ai code {
+  background: rgba(128, 128, 128, 0.22); padding: 1px 4px; border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+}
+.msg.ai pre {
+  background: rgba(0, 0, 0, 0.3); padding: 8px 10px; border-radius: 5px;
+  overflow-x: auto; margin: 4px 0 8px;
+}
+.msg.ai pre code { background: none; padding: 0; }
+.msg.ai strong { font-weight: 600; }
+.msg.ai a { color: var(--accent); text-decoration: none; }
+.msg.ai a:hover { text-decoration: underline; }
 
 #chatInputRow { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 #chatInput {

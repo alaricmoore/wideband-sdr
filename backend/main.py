@@ -52,6 +52,11 @@ class ChatReq(BaseModel):
     model: str | None = None
 
 
+class OllamaConfigReq(BaseModel):
+    url: str | None = None
+    model: str | None = None
+
+
 @app.on_event("startup")
 async def _startup():
     logging.basicConfig(level=logging.INFO,
@@ -151,15 +156,38 @@ def api_chat_stream(req: ChatReq):
     )
 
 
-@app.get("/api/models")
-def api_models():
+def _ollama_status():
+    url = config.OLLAMA_URL
     try:
-        resp = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=5)
+        resp = requests.get(f"{url}/api/tags", timeout=5)
         resp.raise_for_status()
         models = [m.get("name") for m in resp.json().get("models", [])]
-        return {"models": models}
+        return {"connected": True, "url": url, "model": config.OLLAMA_MODEL, "models": models}
     except Exception as e:  # noqa: BLE001
-        return {"models": [], "error": str(e)}
+        return {"connected": False, "url": url, "model": config.OLLAMA_MODEL, "error": str(e)}
+
+
+@app.get("/api/ollama/status")
+def api_ollama_status():
+    return _ollama_status()
+
+
+@app.post("/api/ollama/config")
+def api_ollama_config(req: OllamaConfigReq):
+    if req.url:
+        config.OLLAMA_URL = req.url.strip().rstrip("/")
+    if req.model:
+        config.OLLAMA_MODEL = req.model.strip()
+    return _ollama_status()
+
+
+@app.get("/api/models")
+def api_models():
+    status = _ollama_status()
+    out = {"models": status.get("models", [])}
+    if status.get("error"):
+        out["error"] = status["error"]
+    return out
 
 
 # ---- WebSocket ----

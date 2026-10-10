@@ -3,7 +3,6 @@
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
-const statusDetailEl = $("statusDetail");
 const connectBtn = $("connectBtn");
 const hostInput = $("host");
 const portInput = $("port");
@@ -112,7 +111,6 @@ let spectrumRate = 30; // oscilloscope (spectrum) redraws per second
 let lastSpectrumDraw = 0;
 // favorites (user-saved frequencies)
 let favorites = loadFavorites();
-let favoritesOpen = true;
 const DEMOD_BW = { am: 16000, nbfm: 16000, wfm: 200000, usb: 2700, lsb: 2700 };
 const BW_RANGES = {
   am:   { min: 3000,  max: 20000,  step: 500 },
@@ -123,21 +121,55 @@ const BW_RANGES = {
 };
 
 // ---------- colormap ----------
-const STOPS = [
-  [0.00, 0, 0, 30],
-  [0.15, 0, 40, 140],
-  [0.35, 0, 140, 190],
-  [0.55, 0, 200, 120],
-  [0.75, 220, 210, 40],
-  [1.00, 255, 70, 30],
-];
+const COLORMAPS = {
+  turbo: [
+    [0.00, 0, 0, 30],
+    [0.15, 0, 40, 140],
+    [0.35, 0, 140, 190],
+    [0.55, 0, 200, 120],
+    [0.75, 220, 210, 40],
+    [1.00, 255, 70, 30],
+  ],
+  viridis: [
+    [0.00, 68, 1, 84],
+    [0.25, 59, 82, 139],
+    [0.50, 33, 145, 140],
+    [0.75, 94, 201, 98],
+    [1.00, 253, 231, 37],
+  ],
+  inferno: [
+    [0.00, 0, 0, 4],
+    [0.25, 87, 16, 110],
+    [0.50, 188, 55, 84],
+    [0.75, 249, 142, 9],
+    [1.00, 252, 255, 164],
+  ],
+  plasma: [
+    [0.00, 13, 8, 135],
+    [0.25, 126, 3, 168],
+    [0.50, 204, 71, 120],
+    [0.75, 248, 148, 65],
+    [1.00, 240, 249, 33],
+  ],
+  grayscale: [
+    [0.00, 0, 0, 0],
+    [1.00, 255, 255, 255],
+  ],
+  green: [
+    [0.00, 0, 20, 0],
+    [0.50, 0, 160, 0],
+    [1.00, 140, 255, 140],
+  ],
+};
+let activeColormap = "turbo";
 let minDb = -60, maxDb = 0; // shared spectrum/waterfall dB range (floor adjustable)
 
 function colormap(v) {
+  const stops = COLORMAPS[activeColormap] || COLORMAPS.turbo;
   v = Math.max(0, Math.min(1, v));
-  for (let i = 0; i < STOPS.length - 1; i++) {
-    const [a, r1, g1, b1] = STOPS[i];
-    const [b, r2, g2, b2] = STOPS[i + 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [a, r1, g1, b1] = stops[i];
+    const [b, r2, g2, b2] = stops[i + 1];
     if (v >= a && v <= b) {
       const t = (v - a) / (b - a);
       return [
@@ -152,12 +184,6 @@ function colormap(v) {
 
 function dbToColor(db) {
   return colormap((db - minDb) / (maxDb - minDb));
-}
-
-function fmtHz(hz) {
-  if (hz >= 1e6) return (hz / 1e6).toFixed(1) + "M";
-  if (hz >= 1e3) return (hz / 1e3).toFixed(1) + "k";
-  return hz + " Hz";
 }
 
 // ---------- resize ----------
@@ -461,7 +487,6 @@ function connectWS() {
       renderSpectrumThrottled();
       renderWaterfall();
       renderAxis();
-      updateStatusDetail();
     }
   };
   ws.onopen = () => sendRadioConfig();
@@ -664,7 +689,6 @@ gainSelect.addEventListener("change", () => {
   const g = gainSelect.value;
   gain = g;
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "gain", gain: g }));
-  updateStatusDetail();
   addActivity("gain → " + g);
   persistSettings();
 });
@@ -675,7 +699,6 @@ srSelect.addEventListener("change", () => {
   viewSpan = sr; // reset zoom to the new full width
   configureZoomControls();
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "sample_rate", sample_rate: sr }));
-  updateStatusDetail();
   addActivity("sample rate → " + fmtHz(sr));
 });
 
@@ -711,7 +734,6 @@ async function refreshStatus() {
       const match = [...gainSelect.options].find((o) => o.value === s.gain);
       if (match) gainSelect.value = s.gain;
     }
-    updateStatusDetail();
   } catch (e) { /* ignore */ }
 }
 
@@ -719,7 +741,8 @@ async function refreshStatus() {
 function addMsg(text, role) {
   const d = document.createElement("div");
   d.className = "msg " + role;
-  d.textContent = text;
+  if (role === "ai") d.innerHTML = renderMarkdown(text);
+  else d.textContent = text;
   chatLog.appendChild(d);
   chatLog.scrollTop = chatLog.scrollHeight;
   return d;
@@ -760,13 +783,13 @@ async function sendChat() {
 
         if (ev.type === "token") {
           reply += ev.text;
-          aiMsg.textContent = reply;
+          aiMsg.innerHTML = renderMarkdown(reply);
         } else if (ev.type === "tool") {
           tools.push(ev.name);
           if (!toolMsg) toolMsg = addMsg("", "tool");
           toolMsg.textContent = "🔧 " + tools.join(", ") + "…";
         } else if (ev.type === "done") {
-          if (ev.reply) { reply = ev.reply; aiMsg.textContent = reply; }
+          if (ev.reply) { reply = ev.reply; aiMsg.innerHTML = renderMarkdown(reply); }
         } else if (ev.type === "error") {
           aiMsg.textContent = "⚠️ " + ev.message;
           reply = "";
@@ -817,28 +840,117 @@ function restoreChatHistory() {
   }
 }
 
-// ---- model selector ----
-async function loadModels() {
+// ---- AI model + Ollama connection ----
+const ollamaHost = $("ollamaHost");
+const ollamaPort = $("ollamaPort");
+const ollamaConnectBtn = $("ollamaConnectBtn");
+const ollamaStatusEl = $("ollamaStatus");
+const OLLAMA_STORAGE_KEY = "sdr-ollama";
+
+function saveOllamaSettings() {
   try {
-    const r = await fetch("/api/models").then((r) => r.json());
-    const models = r.models || [];
-    const prev = selectedModel || modelSelect.value;
-    modelSelect.innerHTML = "";
-    for (const m of models) {
-      const o = document.createElement("option");
-      o.value = m;
-      o.textContent = m;
-      modelSelect.appendChild(o);
-    }
-    if (prev && models.includes(prev)) modelSelect.value = prev;
+    localStorage.setItem(OLLAMA_STORAGE_KEY, JSON.stringify({
+      host: ollamaHost.value.trim(),
+      port: ollamaPort.value.trim(),
+      model: selectedModel,
+    }));
+  } catch (e) { /* ignore */ }
+}
+
+function loadOllamaSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(OLLAMA_STORAGE_KEY) || "{}");
   } catch (e) {
-    // leave the dropdown empty on failure
+    return {};
+  }
+}
+
+function setOllamaStatus(connected, detail) {
+  ollamaStatusEl.classList.toggle("connected", connected);
+  ollamaStatusEl.classList.toggle("disconnected", !connected);
+  ollamaStatusEl.textContent = connected ? "● connected" : "● disconnected";
+  ollamaStatusEl.title = connected
+    ? "Ollama connected"
+    : "Ollama unreachable" + (detail ? ": " + detail : "");
+}
+
+function populateModels(models, preferred) {
+  modelSelect.innerHTML = "";
+  for (const m of models) {
+    const o = document.createElement("option");
+    o.value = m;
+    o.textContent = m;
+    modelSelect.appendChild(o);
+  }
+  // Select the saved model if available, else the preferred (backend) model,
+  // else the first available model.
+  const saved = loadOllamaSettings().model;
+  let choice = "";
+  if (saved && models.includes(saved)) choice = saved;
+  else if (preferred && models.includes(preferred)) choice = preferred;
+  else if (models.length) choice = models[0];
+  if (choice) {
+    modelSelect.value = choice;
+    selectedModel = choice;
+  }
+}
+
+function applyOllamaStatus(s) {
+  const { host, port } = parseOllamaUrl(s.url);
+  ollamaHost.value = host;
+  ollamaPort.value = port;
+  setOllamaStatus(s.connected, s.error);
+  populateModels(s.models || [], s.model);
+}
+
+async function refreshOllamaStatus() {
+  try {
+    const s = await fetch("/api/ollama/status").then((r) => r.json());
+    applyOllamaStatus(s);
+  } catch (e) {
+    setOllamaStatus(false, "backend unreachable");
+  }
+}
+
+async function connectOllama() {
+  const host = ollamaHost.value.trim();
+  const port = ollamaPort.value.trim();
+  if (!host) return;
+  const url = "http://" + host + (port ? ":" + port : "");
+  ollamaConnectBtn.disabled = true;
+  ollamaConnectBtn.textContent = "…";
+  try {
+    const r = await fetch("/api/ollama/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    }).then((res) => res.json());
+    applyOllamaStatus(r);
+    saveOllamaSettings();
+  } catch (e) {
+    setOllamaStatus(false, "request failed");
+  } finally {
+    ollamaConnectBtn.disabled = false;
+    ollamaConnectBtn.textContent = "Connect";
+  }
+}
+
+async function initOllama() {
+  const saved = loadOllamaSettings();
+  if (saved.host) {
+    ollamaHost.value = saved.host;
+    ollamaPort.value = saved.port || "11434";
+    connectOllama(); // restore the saved connection
+  } else {
+    refreshOllamaStatus();
   }
 }
 
 modelSelect.addEventListener("change", () => {
   selectedModel = modelSelect.value;
+  saveOllamaSettings();
 });
+
+ollamaConnectBtn.addEventListener("click", connectOllama);
 
 // ---- suggestion chips ----
 document.querySelectorAll(".chip").forEach((chip) => {
@@ -1135,13 +1247,6 @@ toneSlider.addEventListener("input", () => {
 });
 
 // ---------- waterfall / status controls ----------
-function updateStatusDetail() {
-  const parts = [(centerHz / 1e6).toFixed(3) + " MHz",
-                 "SR " + fmtHz(sampleRate),
-                 "gain " + gain];
-  statusDetailEl.textContent = parts.join(" · ");
-}
-
 function updateWfReadouts() {
   floorValue.textContent = Math.round(minDb) + " dB";
   speedValue.textContent = wfSpeed + "×";
@@ -1182,6 +1287,19 @@ smoothSlider.addEventListener("input", () => {
   smoothValue.textContent = smoothSlider.value + "%";
   persistSettings();
 });
+const colormapSelect = $("colormapSelect");
+function setColormap(name) {
+  if (!COLORMAPS[name]) name = "turbo";
+  activeColormap = name;
+  colormapSelect.value = name;
+  renderLegend();
+  try { localStorage.setItem("sdr-colormap", name); } catch (e) { /* ignore */ }
+}
+colormapSelect.addEventListener("change", () => setColormap(colormapSelect.value));
+try {
+  const saved = localStorage.getItem("sdr-colormap");
+  if (saved && COLORMAPS[saved]) setColormap(saved);
+} catch (e) { /* ignore */ }
 pauseBtn.addEventListener("click", () => {
   wfPaused = !wfPaused;
   pauseBtn.textContent = wfPaused ? "▶ Resume" : "⏸ Pause";
@@ -1317,12 +1435,6 @@ saveBtn.addEventListener("click", () => {
   addFavorite(name.trim() || def);
 });
 
-favoritesHeader.addEventListener("click", () => {
-  favoritesOpen = !favoritesOpen;
-  favoritesList.classList.toggle("collapsed", !favoritesOpen);
-  favoritesToggle.textContent = favoritesOpen ? "−" : "+";
-});
-
 // ---------- settings persistence ----------
 const DEFAULT_SETTINGS = {
   minDb: -60,
@@ -1388,6 +1500,108 @@ function applySettings() {
   bwValue.textContent = fmtHz(audioBandwidth);
 }
 
+// ---------- drawers (collapsible right-hand panes) ----------
+const infoHeader = $("infoHeader");
+const infoBody = $("infoBody");
+const signalToggle = $("signalToggle");
+const activityHeader = $("activityHeader");
+const activityToggle = $("activityToggle");
+
+function setupDrawer(headerEl, bodyEl, toggleEl) {
+  let open = true;
+  headerEl.addEventListener("click", () => {
+    open = !open;
+    bodyEl.classList.toggle("collapsed", !open);
+    toggleEl.textContent = open ? "−" : "+";
+  });
+}
+
+setupDrawer(infoHeader, infoBody, signalToggle);
+setupDrawer(activityHeader, activityLog, activityToggle);
+setupDrawer(favoritesHeader, favoritesList, favoritesToggle);
+
+// ---------- draggable panel ordering ----------
+function initDraggablePanels() {
+  const chatPane = $("chatPane");
+  const panelEls = ["infoPanel", "activityPanel", "favoritesPanel", "aiPanel"].map((id) => $(id));
+  let dragged = null;
+
+  function saveOrder() {
+    try {
+      localStorage.setItem("sdr-panel-order", JSON.stringify(panelEls.map((p) => p.id)));
+    } catch (e) { /* ignore */ }
+  }
+
+  function restoreOrder() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("sdr-panel-order") || "[]");
+      if (!Array.isArray(saved)) return;
+      const ids = panelEls.map((p) => p.id);
+      if (saved.length !== ids.length || !saved.every((id) => ids.includes(id))) return;
+      for (const id of saved) {
+        chatPane.appendChild(panelEls.find((p) => p.id === id));
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  for (const panel of panelEls) {
+    const handle = panel.firstElementChild; // the header is the first child
+    handle.draggable = true;
+
+    handle.addEventListener("dragstart", (e) => {
+      dragged = panel;
+      panel.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", panel.id); } catch (err) { /* ignore */ }
+    });
+
+    handle.addEventListener("dragend", () => {
+      dragged = null;
+      for (const p of panelEls) p.classList.remove("dragging", "drag-over");
+      saveOrder();
+    });
+
+    panel.addEventListener("dragover", (e) => {
+      if (!dragged || dragged === panel) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      for (const p of panelEls) p.classList.remove("drag-over");
+      panel.classList.add("drag-over");
+    });
+
+    panel.addEventListener("drop", (e) => {
+      if (!dragged || dragged === panel) return;
+      e.preventDefault();
+      const rect = panel.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      chatPane.insertBefore(dragged, before ? panel : panel.nextElementSibling);
+      panel.classList.remove("drag-over");
+    });
+  }
+
+  restoreOrder();
+}
+
+initDraggablePanels();
+
+// ---------- audio controls toggle ----------
+const audioToggle = $("audioToggle");
+const audioRow = $("audioRow");
+
+function setAudioRow(open) {
+  audioRow.classList.toggle("collapsed", !open);
+  audioToggle.textContent = open ? "⏷ Audio" : "⏵ Audio";
+  try { localStorage.setItem("sdr-audio-row", open ? "1" : "0"); } catch (e) { /* ignore */ }
+}
+
+audioToggle.addEventListener("click", () => {
+  setAudioRow(audioRow.classList.contains("collapsed"));
+});
+
+try {
+  if (localStorage.getItem("sdr-audio-row") === "0") setAudioRow(false);
+} catch (e) { /* ignore */ }
+
 // ---------- init ----------
 bindCanvasInteractions(spectrumCanvas);
 bindCanvasInteractions(waterfallCanvas);
@@ -1412,4 +1626,4 @@ restoreChatHistory();
 refreshStatus();
 setInterval(refreshStatus, 2000);
 
-loadModels();
+initOllama();

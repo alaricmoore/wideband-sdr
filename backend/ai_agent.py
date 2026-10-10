@@ -195,7 +195,14 @@ def _build_context(radio):
         s = radio.status()
         if s.get("connected"):
             lines.append(f"Tuned to {s['center_hz']/1e6:.3f} MHz, sample rate {s['sample_rate']/1e6:.2f} MHz, gain {s['gain']}")
-            lines.append(f"Demod {radio.audio_mode.upper()}, bandwidth {radio.effective_bandwidth()} Hz")
+            if s.get("freq_correction_ppm"):
+                lines.append(f"Frequency correction {s['freq_correction_ppm']} ppm")
+            de = {75e-6: "75 µs", 50e-6: "50 µs", 0.0: "off"}.get(
+                radio.audio_deemphasis, f"{radio.audio_deemphasis * 1e6:.0f} µs")
+            lines.append(
+                f"Demod {radio.audio_mode.upper()}, IF bandwidth {radio.effective_bandwidth()} Hz, "
+                f"de-emphasis {de}, tone {radio.audio_tone:+.2f}"
+            )
     except Exception:
         pass
     try:
@@ -222,12 +229,40 @@ def _build_context(radio):
 
 def _build_messages(user_message, history, radio):
     messages = [{"role": "system", "content": SYSTEM_PROMPT + _build_context(radio)}]
-    for h in history or []:
-        role = h.get("role", "user")
-        if role in ("user", "assistant", "tool"):
-            messages.append({"role": role, "content": h.get("content", "")})
+    past = [
+        {"role": h["role"], "content": h.get("content", "")}
+        for h in (history or [])
+        if h.get("role") in ("user", "assistant", "tool")
+    ]
+    # Keep only the most recent messages (defense-in-depth against context overflow;
+    # the frontend also caps history, but we enforce it here too).
+    if len(past) > config.MAX_HISTORY_MESSAGES:
+        past = past[-config.MAX_HISTORY_MESSAGES:]
+    messages.extend(past)
     messages.append({"role": "user", "content": user_message})
     return messages
+
+
+_SIGNAL_FIELDS = ("freq_hz", "power_db", "bandwidth_hz", "modulation_hint", "band")
+
+
+def _trim_signal(p):
+    """Reduce a signal/peak dict to the fields the model needs, with compact numbers."""
+    out = {}
+    for k in _SIGNAL_FIELDS:
+        if k in p and p[k] is not None:
+            out[k] = p[k]
+    if "freq_hz" in out:
+        out["freq_hz"] = int(round(out["freq_hz"]))
+    if "bandwidth_hz" in out:
+        out["bandwidth_hz"] = int(round(out["bandwidth_hz"]))
+    if "power_db" in out:
+        out["power_db"] = round(out["power_db"], 1)
+    return out
+
+
+def _trim_signals(signals, max_n):
+    return [_trim_signal(p) for p in (signals or [])[:max_n]]
 
 
 def _execute_tool(name, args, radio):
@@ -237,9 +272,15 @@ def _execute_tool(name, args, radio):
         if name == "tune":
             return radio.tune(int(args["freq_hz"]))
         if name == "get_spectrum":
-            return radio.spectrum_snapshot()
+            snap = radio.spectrum_snapshot(top_n=config.MAX_SIGNALS)
+            if isinstance(snap, dict) and isinstance(snap.get("peaks"), list):
+                snap["peaks"] = _trim_signals(snap["peaks"], config.MAX_SIGNALS)
+            return snap
         if name == "scan":
-            return radio.scan(int(args["start_hz"]), int(args["stop_hz"]), args.get("step_hz"))
+            result = radio.scan(int(args["start_hz"]), int(args["stop_hz"]), args.get("step_hz"))
+            if isinstance(result, dict) and isinstance(result.get("signals"), list):
+                result["signals"] = _trim_signals(result["signals"], config.MAX_SIGNALS)
+            return result
         if name == "characterize":
             return radio.characterize(args.get("freq_hz"))
         if name == "set_gain":
