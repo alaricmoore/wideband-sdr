@@ -1,5 +1,8 @@
 # Wideband-SDR
 
+[![CI](https://github.com/kasp0r/wideband-sdr/actions/workflows/ci.yml/badge.svg)](https://github.com/kasp0r/wideband-sdr/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A Dockerised web app that connects to an **rtl_tcp** SDR server (e.g. an RTL-SDR dongle),
 streams a live spectrum/waterfall to the browser, demodulates audio you can listen to,
 and adds an **Ollama**-powered assistant
@@ -17,6 +20,20 @@ time). It owns the radio, does the DSP, and multiplexes results out to any numbe
 browsers.
 
 ![Wideband-SDR](resources/screenshot.png)
+
+## Contents
+
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Setting up Ollama](#setting-up-ollama)
+- [Testing](#testing)
+- [Configuration (environment variables)](#configuration-environment-variables)
+- [Running rtl_tcp](#running-rtl_tcp)
+- [API overview](#api-overview)
+- [How signal identification works](#how-signal-identification-works)
+- [Limitations / next steps](#limitations--next-steps)
+- [License](#license)
+- [Contributing](#contributing)
 
 ## Features
 
