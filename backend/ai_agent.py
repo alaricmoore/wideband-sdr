@@ -160,7 +160,73 @@ TOOLS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_tone",
+            "description": "Set the audio tone tilt EQ (-1.0 dark/warm to +1.0 bright).",
+            "parameters": {
+                "type": "object",
+                "properties": {"tone": {"type": "number", "description": "Tone from -1.0 to 1.0"}},
+                "required": ["tone"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_deemphasis",
+            "description": "Set the FM de-emphasis time constant (75us for Americas, 50us for Europe, or off).",
+            "parameters": {
+                "type": "object",
+                "properties": {"deemphasis": {"type": "string", "enum": ["75us", "50us", "off"]}},
+                "required": ["deemphasis"],
+            },
+        },
+    },
 ]
+
+
+def _build_context(radio):
+    """Snapshot the live radio state so the model starts already grounded."""
+    lines = []
+    try:
+        s = radio.status()
+        if s.get("connected"):
+            lines.append(f"Tuned to {s['center_hz']/1e6:.3f} MHz, sample rate {s['sample_rate']/1e6:.2f} MHz, gain {s['gain']}")
+            lines.append(f"Demod {radio.audio_mode.upper()}, bandwidth {radio.effective_bandwidth()} Hz")
+    except Exception:
+        pass
+    try:
+        m = radio.get_signal_metrics()
+        if m.get("signal_detected"):
+            lines.append(
+                f"Tuned signal: SNR {m['snr_db']:.1f} dB, tuning error {m['tuning_error_hz']:+.0f} Hz, "
+                f"bandwidth {m['bandwidth_hz']/1e3:.1f} kHz, band '{m['band']}', hint: {m['modulation_hint']}"
+            )
+    except Exception:
+        pass
+    try:
+        snap = radio.spectrum_snapshot(top_n=6)
+        if snap.get("peaks"):
+            tops = ", ".join(f"{p['freq_hz']/1e6:.3f} MHz ({p['power_db']:.0f} dB)" for p in snap["peaks"])
+            lines.append(f"Strongest signals in view: {tops}")
+    except Exception:
+        pass
+    if not lines:
+        return "\n\nCurrent radio state: not connected or no data yet."
+    return ("\n\nCurrent radio state (already known; don't re-query unless something changed):\n"
+            + "\n".join("- " + l for l in lines))
+
+
+def _build_messages(user_message, history, radio):
+    messages = [{"role": "system", "content": SYSTEM_PROMPT + _build_context(radio)}]
+    for h in history or []:
+        role = h.get("role", "user")
+        if role in ("user", "assistant", "tool"):
+            messages.append({"role": role, "content": h.get("content", "")})
+    messages.append({"role": "user", "content": user_message})
+    return messages
 
 
 def _execute_tool(name, args, radio):
@@ -191,16 +257,22 @@ def _execute_tool(name, args, radio):
             return radio.fine_tune(int(args["offset_hz"]))
         if name == "get_signal_metrics":
             return radio.get_signal_metrics()
+        if name == "set_tone":
+            radio.set_audio_tone(float(args["tone"]))
+            return {"ok": True, "tone": radio.audio_tone}
+        if name == "set_deemphasis":
+            radio.set_audio_deemphasis(args["deemphasis"])
+            return {"ok": True, "deemphasis": args["deemphasis"]}
         return {"error": f"unknown tool: {name}"}
     except Exception as e:  # noqa: BLE001
         return {"error": f"tool {name} failed: {e}"}
 
 
-def _ollama_chat(messages):
+def _ollama_chat(messages, model=None):
     resp = requests.post(
         f"{config.OLLAMA_URL}/api/chat",
         json={
-            "model": config.OLLAMA_MODEL,
+            "model": model or config.OLLAMA_MODEL,
             "messages": messages,
             "tools": TOOLS,
             "stream": False,
@@ -212,25 +284,71 @@ def _ollama_chat(messages):
     return resp.json()
 
 
-def chat(user_message, history, radio, max_tool_rounds=10):
+def _ollama_chat_stream(messages, model=None):
+    """Yield {"type":"token","text":...} chunks and, at the end, a
+    {"type":"tool_calls","tool_calls":[...]} event if the model called tools."""
+    resp = requests.post(
+        f"{config.OLLAMA_URL}/api/chat",
+        json={
+            "model": model or config.OLLAMA_MODEL,
+            "messages": messages,
+            "tools": TOOLS,
+            "stream": True,
+            "options": {"temperature": 0.2},
+        },
+        timeout=config.OLLAMA_TIMEOUT,
+        stream=True,
+    )
+    resp.raise_for_status()
+
+    tool_calls = {}  # index -> {"name": str, "arguments": str}
+    for raw in resp.iter_lines():
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        msg = data.get("message", {})
+        if msg.get("content"):
+            yield {"type": "token", "text": msg["content"]}
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            idx = tc.get("index", 0)
+            entry = tool_calls.setdefault(idx, {"name": "", "arguments": ""})
+            if fn.get("name"):
+                entry["name"] = fn["name"]
+            entry["arguments"] += fn.get("arguments", "")
+        if data.get("done"):
+            break
+
+    final_tool_calls = []
+    for idx in sorted(tool_calls):
+        entry = tool_calls[idx]
+        args = entry["arguments"]
+        try:
+            args = json.loads(args) if args else {}
+        except json.JSONDecodeError:
+            args = {}
+        final_tool_calls.append({"function": {"name": entry["name"], "arguments": args}})
+
+    if final_tool_calls:
+        yield {"type": "tool_calls", "tool_calls": final_tool_calls}
+
+
+def chat(user_message, history, radio, model=None, max_tool_rounds=10):
     """Run one agent turn. history is a list of {role, content} dicts."""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for h in history or []:
-        role = h.get("role", "user")
-        if role in ("user", "assistant", "tool"):
-            messages.append({"role": role, "content": h.get("content", "")})
-    messages.append({"role": "user", "content": user_message})
+    messages = _build_messages(user_message, history, radio)
 
     tools_called = []
     for _ in range(max_tool_rounds):
         try:
-            data = _ollama_chat(messages)
+            data = _ollama_chat(messages, model)
         except requests.RequestException as e:
             return {"reply": f"⚠️ Could not reach Ollama at {config.OLLAMA_URL}: {e}",
                     "tools_called": tools_called}
 
         msg = data.get("message", {})
-        # Keep the assistant message (with any tool_calls) in history.
         messages.append({
             "role": "assistant",
             "content": msg.get("content", ""),
@@ -259,3 +377,61 @@ def chat(user_message, history, radio, max_tool_rounds=10):
                  + ", ".join(tools_called),
         "tools_called": tools_called,
     }
+
+
+def chat_stream(user_message, history, radio, model=None, max_tool_rounds=10):
+    """Stream one agent turn as newline-delimited JSON events.
+
+    Events:
+      {"type":"tool","name":...,"args":...}   when a tool is called
+      {"type":"token","text":...}             a chunk of the final answer
+      {"type":"done","reply":...}             completion
+      {"type":"error","message":...}          an error
+    """
+    messages = _build_messages(user_message, history, radio)
+
+    tools_called = []
+    for _ in range(max_tool_rounds):
+        try:
+            gen = _ollama_chat_stream(messages, model)
+        except requests.RequestException as e:
+            yield json.dumps({"type": "error", "message": f"Could not reach Ollama: {e}"}) + "\n"
+            return
+
+        content = ""
+        tool_calls = None
+        for chunk in gen:
+            if chunk["type"] == "token":
+                content += chunk["text"]
+                yield json.dumps({"type": "token", "text": chunk["text"]}) + "\n"
+            elif chunk["type"] == "tool_calls":
+                tool_calls = chunk["tool_calls"]
+
+        assistant_msg = {"role": "assistant", "content": content}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
+
+        if not tool_calls:
+            yield json.dumps({"type": "done", "reply": content, "tools_called": tools_called}) + "\n"
+            return
+
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            name = fn.get("name")
+            args = fn.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            tools_called.append(name)
+            yield json.dumps({"type": "tool", "name": name, "args": args}) + "\n"
+            result = _execute_tool(name, args, radio)
+            messages.append({"role": "tool", "content": json.dumps(result)})
+
+    yield json.dumps({
+        "type": "done",
+        "reply": "I reached my tool-calling limit. Tools used: " + ", ".join(tools_called),
+        "tools_called": tools_called,
+    }) + "\n"

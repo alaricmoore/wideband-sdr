@@ -1,4 +1,4 @@
-from ai_agent import _execute_tool
+from ai_agent import _build_context, _build_messages, _execute_tool
 
 
 class FakeRadio:
@@ -6,6 +6,7 @@ class FakeRadio:
         self.calls = []
         self.audio_mode = "nbfm"
         self.audio_bandwidth = None
+        self.audio_tone = 0
 
     def status(self):
         self.calls.append(("status",))
@@ -45,6 +46,14 @@ class FakeRadio:
 
     def effective_bandwidth(self):
         return self.audio_bandwidth if self.audio_bandwidth is not None else 16000
+
+    def set_audio_tone(self, tone):
+        self.calls.append(("set_audio_tone", tone))
+        self.audio_tone = tone
+
+    def set_audio_deemphasis(self, deemphasis):
+        self.calls.append(("set_audio_deemphasis", deemphasis))
+        self.audio_deemphasis = deemphasis
 
     def set_sample_rate(self, sample_rate):
         self.calls.append(("set_sample_rate", sample_rate))
@@ -115,3 +124,58 @@ def test_unknown_tool_returns_error():
     res = _execute_tool("does_not_exist", {}, r)
     assert "error" in res
     assert r.calls == []
+
+
+def test_set_tone_dispatch():
+    r = FakeRadio()
+    res = _execute_tool("set_tone", {"tone": 0.5}, r)
+    assert r.calls == [("set_audio_tone", 0.5)]
+    assert res["tone"] == 0.5
+
+
+def test_set_deemphasis_dispatch():
+    r = FakeRadio()
+    res = _execute_tool("set_deemphasis", {"deemphasis": "50us"}, r)
+    assert r.calls == [("set_audio_deemphasis", "50us")]
+    assert res["deemphasis"] == "50us"
+
+
+def test_build_context_not_connected():
+    r = FakeRadio()
+    ctx = _build_context(r)
+    assert "not connected or no data yet" in ctx
+
+
+def test_build_context_includes_state():
+    class RichRadio(FakeRadio):
+        def status(self):
+            return {"connected": True, "center_hz": 98_800_000, "sample_rate": 2_400_000, "gain": "auto"}
+
+        def get_signal_metrics(self):
+            return {
+                "signal_detected": True,
+                "snr_db": 12.3,
+                "tuning_error_hz": 250.0,
+                "bandwidth_hz": 200_000.0,
+                "band": "FM broadcast",
+                "modulation_hint": "FM (NBFM/WFM) or digital",
+            }
+
+        def spectrum_snapshot(self, top_n=20, threshold_db=10.0):
+            return {"peaks": [{"freq_hz": 98_800_000.0, "power_db": -42.0}]}
+
+    r = RichRadio()
+    r.audio_mode = "wfm"
+    ctx = _build_context(r)
+    assert "98.800 MHz" in ctx
+    assert "FM broadcast" in ctx
+    assert "WFM" in ctx
+
+
+def test_build_messages_includes_context_and_history():
+    r = FakeRadio()
+    msgs = _build_messages("hello", [{"role": "user", "content": "hi"}], r)
+    assert msgs[0]["role"] == "system"
+    assert "Current radio state" in msgs[0]["content"]
+    assert msgs[1] == {"role": "user", "content": "hi"}
+    assert msgs[-1] == {"role": "user", "content": "hello"}

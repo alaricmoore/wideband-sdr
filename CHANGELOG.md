@@ -5,7 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-10
+
+### Added
+
+- Favorites (save / remove / tune frequencies, with demod mode + bandwidth).
+- Audio recording to WAV with embedded metadata (frequency, demod, timestamp).
+- Waterfall time axis (toggleable timestamps) and a Grab screenshot button.
+- Connection history (recent SDR hosts) with autocomplete.
+- AI assistant overhaul: live grounding, streaming responses, live tool progress,
+  suggestion chips, model selector, persisted chat history, and `set_tone` /
+  `set_deemphasis` tools.
+- Persisted UI settings (floor, speed, scope, tone, volume, demod, bandwidth, gain,
+  de-emphasis).
+- Oscilloscope refresh-rate (Scope) slider; de-emphasis region labels; tone tilt EQ.
 
 ## [0.1.0] - 2026-10-09
 
@@ -20,4 +33,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker and docker-compose setup.
 - Test suite covering DSP, demodulators, rtl_tcp protocol, and AI tool dispatch.
 
+[0.2.0]: https://github.com/OWNER/REPO/releases/tag/v0.2.0
 [0.1.0]: https://github.com/OWNER/REPO/releases/tag/v0.1.0

@@ -95,7 +95,7 @@ AI tool dispatch.
 | `AVERAGES`        | `4`               | frames averaged per update |
 | `DEFAULT_FREQ`    | `100000000`       | startup frequency (Hz) |
 | `DEFAULT_GAIN`    | `auto`            | startup gain |
-| `DEFAULT_DEMOD`   | `nbfm`            | startup demodulation mode |
+| `DEFAULT_DEMOD`   | `wfm`             | startup demodulation mode |
 | `AUTO_CONNECT`    | `1`               | connect to rtl_tcp on startup |
 | `FREQ_CORRECTION` | `0`               | RTL-SDR crystal correction (ppm) |
 | `RECONNECT_DELAY` | `2`               | reconnect backoff base (seconds) |
@@ -121,6 +121,30 @@ Notes:
   `FREQ_CORRECTION` to your dongle's ppm offset (e.g. `28`), which corrects both the
   tuned frequency and the effective sample rate.
 - Keep sample rate ≤ ~2.4 MS/s (rtl_tcp / USB limit). The app defaults to 2.4 MS/s.
+
+### Managing rtl_tcp with sdr-server-stack
+
+Instead of running `rtl_tcp` by hand, you can manage it with
+[sdr-server-stack](https://github.com/kasp0r/sdr-server-stack) — a dependency-light
+set of shell scripts that run one `rtl_tcp` server per attached RTL-SDR dongle on a
+single host. This is handy when you serve your dongle(s) from a dedicated SDR host
+machine.
+
+On the SDR host:
+
+```bash
+git clone https://github.com/kasp0r/sdr-server-stack.git
+cd sdr-server-stack
+./sdr list              # confirm your dongles are detected
+./sdr init              # generate sdr.conf (one rtl_tcp server per free dongle)
+./sdr start <name>      # start a server (name comes from sdr init / sdr.conf)
+./sdr status            # confirm it's running and on which port
+```
+
+Then point SDR AI Assist at it by setting `SDR_HOST` to the SDR host's address and
+`SDR_PORT` to the port assigned in `sdr.conf` (the first dongle defaults to `1234`,
+the next to `1235`, and so on). To serve several dongles at once, run one SDR AI
+Assist instance per port, or switch dongles by changing `SDR_PORT`.
 
 ## API overview
 

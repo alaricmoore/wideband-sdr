@@ -5,6 +5,9 @@ const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
 const statusDetailEl = $("statusDetail");
 const connectBtn = $("connectBtn");
+const hostInput = $("host");
+const portInput = $("port");
+const hostHistory = $("hostHistory");
 const bandChip = $("bandChip");
 const signalDot = $("signalDot");
 const signalStatus = $("signalStatus");
@@ -15,6 +18,11 @@ const mAdj = $("mAdj");
 const mSignals = $("mSignals");
 const mFloor = $("mFloor");
 const activityLog = $("activityLog");
+const saveBtn = $("saveBtn");
+const favoritesHeader = $("favoritesHeader");
+const favoritesToggle = $("favoritesToggle");
+const favoritesList = $("favoritesList");
+const favoritesCount = $("favoritesCount");
 const spectrumCanvas = $("spectrum");
 const waterfallCanvas = $("waterfall");
 const legendCanvas = $("legend");
@@ -24,15 +32,22 @@ const floorSlider = $("floorSlider");
 const floorValue = $("floorValue");
 const speedSlider = $("speedSlider");
 const speedValue = $("speedValue");
+const scopeSlider = $("scopeSlider");
+const scopeValue = $("scopeValue");
 const pauseBtn = $("pauseBtn");
+const grabBtn = $("grabBtn");
+const timeAxisToggle = $("timeAxisToggle");
 const hoverTip = $("hoverTip");
 const radioPaneEl = $("radioPane");
 const gainSelect = $("gainSelect");
 const srSelect = $("srSelect");
 const chatLog = $("chatLog");
 const chatInput = $("chatInput");
+const modelSelect = $("modelSelect");
 const demodSelect = $("demodSelect");
 const listenBtn = $("listenBtn");
+const recordBtn = $("recordBtn");
+const recordIndicator = $("recordIndicator");
 const bwSlider = $("bwSlider");
 const bwValue = $("bwValue");
 const deemphSelect = $("deemphSelect");
@@ -51,14 +66,23 @@ let freqs = [];
 let power = [];
 let connected = false;
 let prevConnected = null; // for activity-log connection transitions
+let recentHosts = loadRecentHosts();
 let gain = "auto";
-let chatHistory = []; // prior {role, content} turns
-let demodMode = "nbfm";
-let audioBandwidth = 16000; // current IF filter bandwidth (Hz)
+let chatHistory = loadChatHistory(); // prior {role, content} turns
+let selectedModel = ""; // empty = use backend default
+let demodMode = "wfm";
+let audioBandwidth = 200000; // current IF filter bandwidth (Hz)
 // waterfall state
 let wfImage = null, wfW = 0, wfH = 0;
 let wfPaused = false;
 let wfSpeed = 2; // rows per spectrum frame
+let wfTimes = []; // per-row timestamps (ms) for the time axis
+let showTimeAxis = true;
+let spectrumRate = 30; // oscilloscope (spectrum) redraws per second
+let lastSpectrumDraw = 0;
+// favorites (user-saved frequencies)
+let favorites = loadFavorites();
+let favoritesOpen = true;
 const DEMOD_BW = { am: 16000, nbfm: 16000, wfm: 200000, usb: 2700, lsb: 2700 };
 const BW_RANGES = {
   am:   { min: 3000,  max: 20000,  step: 500 },
@@ -77,7 +101,7 @@ const STOPS = [
   [0.75, 220, 210, 40],
   [1.00, 255, 70, 30],
 ];
-let minDb = -80, maxDb = 0; // shared spectrum/waterfall dB range (floor adjustable)
+let minDb = -60, maxDb = 0; // shared spectrum/waterfall dB range (floor adjustable)
 
 function colormap(v) {
   v = Math.max(0, Math.min(1, v));
@@ -176,19 +200,6 @@ function renderSpectrum() {
   sctx.fillStyle = "rgba(57, 211, 83, 0.08)";
   sctx.fill();
 
-  // peak frequency labels
-  const span = sampleRate, left = centerHz - span / 2;
-  sctx.fillStyle = "#ffd166";
-  sctx.font = "10px monospace";
-  sctx.textAlign = "center";
-  let lastX = -1e9;
-  for (const p of clientPeaks()) {
-    const x = ((p.freq - left) / span) * w;
-    if (x < 20 || x > w - 20 || Math.abs(x - lastX) < 46) continue;
-    lastX = x;
-    sctx.fillText((p.freq / 1e6).toFixed(3), x, 10);
-  }
-
   // dB scale labels
   sctx.fillStyle = "#8b949e";
   sctx.font = "10px monospace";
@@ -205,6 +216,7 @@ function ensureWfBuffer(w, h) {
   if (wfImage && wfW === w && wfH === h) return;
   wfW = w; wfH = h;
   wfImage = wctx.createImageData(w, h);
+  wfTimes = new Array(h).fill(0);
   const [fr, fg, fb] = colormap(0); // fill with the cold (noise-floor) color
   for (let i = 0; i < wfImage.data.length; i += 4) {
     wfImage.data[i] = fr; wfImage.data[i + 1] = fg; wfImage.data[i + 2] = fb; wfImage.data[i + 3] = 255;
@@ -223,8 +235,11 @@ function renderWaterfall() {
     const shift = Math.min(Math.max(1, wfSpeed), h);
     // scroll existing rows down by `shift`
     data.copyWithin(shift * rowBytes, 0, (h - shift) * rowBytes);
+    wfTimes.copyWithin(shift, 0, h - shift);
+    const now = Date.now();
     // draw `shift` fresh rows at the top from the current spectrum
     for (let r = 0; r < shift; r++) {
+      wfTimes[r] = now;
       const base = r * rowBytes;
       for (let x = 0; x < w; x++) {
         const i = Math.floor((x / w) * n);
@@ -237,7 +252,31 @@ function renderWaterfall() {
 
   wctx.setTransform(1, 0, 0, 1, 0, 0);
   wctx.putImageData(wfImage, 0, 0);
+  drawTimeAxis();
   drawTuneOverlay(wctx, w, h, false);
+}
+
+function drawTimeAxis() {
+  if (!showTimeAxis) return;
+  const h = waterfallCanvas.height;
+  if (!h || !wfTimes.length) return;
+  const ctx = wctx;
+  ctx.font = "10px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  const count = Math.max(2, Math.floor(h / 80));
+  for (let i = 0; i <= count; i++) {
+    const y = Math.min(h - 14, Math.round((i * (h - 14)) / count));
+    const t = wfTimes[y];
+    if (!t) continue;
+    const label = new Date(t).toLocaleTimeString([], { hour12: false });
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+    ctx.fillRect(3, y, tw + 10, 13);
+    ctx.fillStyle = "#aab4c0";
+    ctx.fillText(label, 8, y + 2);
+  }
+  ctx.textBaseline = "alphabetic";
 }
 
 function renderLegend() {
@@ -346,7 +385,7 @@ function connectWS() {
         if (Number(bwSlider.value) !== audioBandwidth) bwSlider.value = audioBandwidth;
         bwValue.textContent = fmtHz(audioBandwidth);
       }
-      renderSpectrum();
+      renderSpectrumThrottled();
       renderWaterfall();
       renderAxis();
       updateStatusDetail();
@@ -455,16 +494,55 @@ function tuneFromInput() {
 $("tuneBtn").addEventListener("click", tuneFromInput);
 freqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") tuneFromInput(); });
 
+// ---- connection history (recent SDR hosts) ----
+function loadRecentHosts() {
+  try {
+    const h = JSON.parse(localStorage.getItem("sdr-recent-hosts") || "[]");
+    return Array.isArray(h) ? h : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveRecentHost(host, port) {
+  recentHosts = recentHosts.filter((r) => r.host !== host);
+  recentHosts.unshift({ host, port });
+  if (recentHosts.length > 10) recentHosts.pop();
+  localStorage.setItem("sdr-recent-hosts", JSON.stringify(recentHosts));
+  renderHostHistory();
+}
+
+function renderHostHistory() {
+  hostHistory.innerHTML = "";
+  for (const r of recentHosts) {
+    const o = document.createElement("option");
+    o.value = r.host;
+    hostHistory.appendChild(o);
+  }
+}
+
+hostInput.addEventListener("input", () => {
+  const host = hostInput.value.trim();
+  const match = recentHosts.find((r) => r.host === host);
+  if (match) portInput.value = match.port;
+});
+
 connectBtn.addEventListener("click", async () => {
   if (connected) {
     await fetch("/api/disconnect", { method: "POST" }).then((r) => r.json()).catch(() => {});
   } else {
-    const host = $("host").value.trim();
-    const port = Number($("port").value);
-    await fetch("/api/connect", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ host, port }),
-    }).then((r) => r.json()).catch(() => {});
+    const host = hostInput.value.trim();
+    const port = Number(portInput.value);
+    if (host) {
+      const r = await fetch("/api/connect", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host, port }),
+      }).then((r) => r.json()).catch(() => null);
+      if (r && !r.error) {
+        saveRecentHost(host, port);
+        addActivity("connected to " + host + ":" + port);
+      }
+    }
   }
   refreshStatus();
 });
@@ -475,6 +553,7 @@ gainSelect.addEventListener("change", () => {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "gain", gain: g }));
   updateStatusDetail();
   addActivity("gain → " + g);
+  persistSettings();
 });
 
 srSelect.addEventListener("change", () => {
@@ -536,31 +615,122 @@ async function sendChat() {
   if (!text) return;
   chatInput.value = "";
   addMsg(text, "user");
-  const thinking = addMsg("…", "ai");
+
+  const aiMsg = addMsg("…", "ai");
+  let toolMsg = null;
+  let reply = "";
+  const tools = [];
+
   try {
-    const r = await fetch("/api/chat", {
+    const resp = await fetch("/api/chat/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, history: chatHistory }),
-    }).then((r) => r.json());
-    thinking.remove();
-    if (r.tools_called && r.tools_called.length) {
-      addMsg("🔧 used tools: " + r.tools_called.join(", "), "tool");
-      addActivity("AI used tools: " + r.tools_called.join(", "));
+      body: JSON.stringify({ message: text, history: chatHistory, model: selectedModel }),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line); } catch { continue; }
+
+        if (ev.type === "token") {
+          reply += ev.text;
+          aiMsg.textContent = reply;
+        } else if (ev.type === "tool") {
+          tools.push(ev.name);
+          if (!toolMsg) toolMsg = addMsg("", "tool");
+          toolMsg.textContent = "🔧 " + tools.join(", ") + "…";
+        } else if (ev.type === "done") {
+          if (ev.reply) { reply = ev.reply; aiMsg.textContent = reply; }
+        } else if (ev.type === "error") {
+          aiMsg.textContent = "⚠️ " + ev.message;
+          reply = "";
+        }
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
     }
-    addMsg(r.reply || "(no reply)", "ai");
-    // update shared history for context
-    chatHistory.push({ role: "user", content: text });
-    chatHistory.push({ role: "assistant", content: r.reply || "" });
-    if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
   } catch (e) {
-    thinking.remove();
-    addMsg("Error: " + e, "error");
+    aiMsg.textContent = "Error: " + e;
+    reply = "";
+  }
+
+  if (toolMsg) {
+    toolMsg.textContent = "🔧 used tools: " + tools.join(", ");
+    addActivity("AI used tools: " + tools.join(", "));
+  }
+  if (reply) {
+    chatHistory.push({ role: "user", content: text });
+    chatHistory.push({ role: "assistant", content: reply });
+    if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+    persistChatHistory();
   }
 }
 
 $("chatSend").addEventListener("click", sendChat);
 chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
+// ---- chat history persistence ----
+function loadChatHistory() {
+  try {
+    const h = JSON.parse(localStorage.getItem("sdr-chat-history") || "[]");
+    return Array.isArray(h) ? h : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function persistChatHistory() {
+  localStorage.setItem("sdr-chat-history", JSON.stringify(chatHistory));
+}
+
+function restoreChatHistory() {
+  for (const h of chatHistory) {
+    if (h.role === "user") addMsg(h.content, "user");
+    else if (h.role === "assistant") addMsg(h.content, "ai");
+  }
+}
+
+// ---- model selector ----
+async function loadModels() {
+  try {
+    const r = await fetch("/api/models").then((r) => r.json());
+    const models = r.models || [];
+    const prev = selectedModel || modelSelect.value;
+    modelSelect.innerHTML = "";
+    for (const m of models) {
+      const o = document.createElement("option");
+      o.value = m;
+      o.textContent = m;
+      modelSelect.appendChild(o);
+    }
+    if (prev && models.includes(prev)) modelSelect.value = prev;
+  } catch (e) {
+    // leave the dropdown empty on failure
+  }
+}
+
+modelSelect.addEventListener("change", () => {
+  selectedModel = modelSelect.value;
+});
+
+// ---- suggestion chips ----
+document.querySelectorAll(".chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    chatInput.value = chip.dataset.prompt;
+    sendChat();
+  });
 });
 
 // ---------- audio (demod + playback) ----------
@@ -570,8 +740,13 @@ let listening = false;
 let bwDragging = false;
 let deemphasis = "75us";
 let tone = 0; // -1..1 tilt EQ (tone control)
-let volume = 1.0;
+let volume = 0.3; // 30% default, to avoid blasting ears on first listen
 let lastConfigSent = 0;
+let recording = false;
+let recordChunks = [];
+let recordStart = 0;
+let recordMeta = null;
+let recordTimer = null;
 
 function startListening() {
   if (listening) return;
@@ -595,7 +770,9 @@ function openAudioWS() {
   audioWS.binaryType = "arraybuffer";
   audioWS.onmessage = (ev) => {
     if (typeof ev.data === "string") return; // JSON info frame
-    audioChunks.push(new Float32Array(ev.data));
+    const chunk = new Float32Array(ev.data);
+    audioChunks.push(chunk);
+    if (recording) recordChunks.push(chunk);
   };
   audioWS.onopen = () => {};
   audioWS.onclose = () => { if (listening) setTimeout(openAudioWS, 1000); };
@@ -615,6 +792,7 @@ function onAudioProcess(e) {
 }
 
 function stopListening() {
+  if (recording) stopRecording();
   listening = false;
   listenBtn.textContent = "🔊 Listen";
   listenBtn.classList.remove("listening");
@@ -636,12 +814,170 @@ listenBtn.addEventListener("click", () => {
   if (listening) stopListening(); else startListening();
 });
 
+function startRecording() {
+  if (recording) return;
+  if (!listening) startListening();
+  recording = true;
+  recordChunks = [];
+  recordStart = Date.now();
+  recordMeta = {
+    freq_hz: centerHz,
+    demod_mode: demodMode,
+    bandwidth_hz: audioBandwidth,
+    started: new Date(),
+  };
+  recordBtn.textContent = "⏹ Stop";
+  recordBtn.classList.add("recording");
+  recordTimer = setInterval(() => {
+    const secs = Math.floor((Date.now() - recordStart) / 1000);
+    const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+    const ss = String(secs % 60).padStart(2, "0");
+    recordIndicator.textContent = "● " + mm + ":" + ss;
+  }, 500);
+}
+
+function stopRecording() {
+  if (!recording) return;
+  recording = false;
+  if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+  recordIndicator.textContent = "";
+  recordBtn.textContent = "⏺ Record";
+  recordBtn.classList.remove("recording");
+  if (recordChunks.length) {
+    const dur = Math.max(1, Math.round((Date.now() - recordStart) / 1000));
+    const wav = encodeWav(recordChunks, 48000, buildRecordMeta());
+    downloadBlob(new Blob([wav], { type: "audio/wav" }), "recording-" + fileTimestamp() + ".wav");
+    addActivity("recording saved: " + dur + "s");
+  }
+  recordChunks = [];
+  recordMeta = null;
+}
+
+function encodeWav(chunks, sampleRate, meta) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const buf = new Float32Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.length; }
+  const pcm = new Int16Array(total);
+  for (let i = 0; i < total; i++) {
+    const s = Math.max(-1, Math.min(1, buf[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  const dataSize = pcm.length * 2;
+
+  // Build a RIFF INFO (LIST-INFO) chunk from the metadata.
+  const info = [];
+  if (meta) {
+    if (meta.title) info.push(["INAM", meta.title]);
+    if (meta.comment) info.push(["ICMT", meta.comment]);
+    if (meta.date) info.push(["ICRD", meta.date]);
+    info.push(["ISFT", "SDR AI Assist"]);
+  }
+  let listSize = 0;
+  if (info.length) {
+    listSize = 4; // "INFO" type id
+    for (const pair of info) {
+      const n = pair[1].length + 1; // data + null terminator
+      listSize += 8 + n + (n % 2); // tag + len + data (+ pad to even)
+    }
+  }
+
+  const ab = new ArrayBuffer(44 + dataSize + (info.length ? 8 + listSize : 0));
+  const v = new DataView(ab);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+
+  wstr(0, "RIFF");
+  v.setUint32(4, ab.byteLength - 8, true);
+  wstr(8, "WAVE");
+  wstr(12, "fmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  wstr(36, "data");
+  v.setUint32(40, dataSize, true);
+  for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, pcm[i], true);
+
+  if (info.length) {
+    let o = 44 + dataSize;
+    wstr(o, "LIST");
+    v.setUint32(o + 4, listSize, true);
+    wstr(o + 8, "INFO");
+    o += 12;
+    for (const pair of info) {
+      const tag = pair[0], val = pair[1];
+      wstr(o, tag);
+      v.setUint32(o + 4, val.length + 1, true);
+      wstr(o + 8, val);
+      v.setUint8(o + 8 + val.length, 0); // null terminator
+      const n = val.length + 1;
+      o += 8 + n + (n % 2);
+    }
+  }
+
+  return ab;
+}
+
+function buildRecordMeta() {
+  const m = recordMeta || { freq_hz: centerHz, demod_mode: demodMode, bandwidth_hz: audioBandwidth, started: new Date() };
+  const p2 = (n) => String(n).padStart(2, "0");
+  const d = m.started instanceof Date ? m.started : new Date(m.started || Date.now());
+  const freqMhz = (m.freq_hz / 1e6).toFixed(3);
+  const dateStr = d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate());
+  const timeStr = p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds());
+  return {
+    title: freqMhz + " MHz " + (m.demod_mode || "?").toUpperCase(),
+    comment: "Frequency: " + freqMhz + " MHz · Demod: " + (m.demod_mode || "?").toUpperCase() +
+      " · Bandwidth: " + fmtHz(m.bandwidth_hz) +
+      " · Recorded: " + dateStr + " " + timeStr,
+    date: dateStr,
+  };
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function fileTimestamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+    "_" + p(d.getHours()) + "-" + p(d.getMinutes()) + "-" + p(d.getSeconds());
+}
+
+function grabWaterfall() {
+  const dataURL = waterfallCanvas.toDataURL("image/png");
+  const a = document.createElement("a");
+  a.href = dataURL;
+  a.download = "waterfall-" + fileTimestamp() + ".png";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  addActivity("waterfall image saved");
+}
+
+recordBtn.addEventListener("click", () => {
+  if (recording) stopRecording(); else startRecording();
+});
+
 demodSelect.addEventListener("change", () => {
   demodMode = demodSelect.value;
   updateBandwidthUI();
   sendRadioConfig();
   renderSpectrum(); // update passband width immediately
   addActivity("demod → " + demodMode.toUpperCase());
+  persistSettings();
 });
 
 function updateBandwidthUI() {
@@ -659,24 +995,28 @@ bwSlider.addEventListener("input", () => {
   bwValue.textContent = fmtHz(audioBandwidth);
   sendRadioConfig();
   renderSpectrum(); // update passband overlay width
+  persistSettings();
 });
 
 volSlider.addEventListener("input", () => {
   volume = Number(volSlider.value);
   volValue.textContent = Math.round(volume * 100) + "%";
   if (gainNode) gainNode.gain.value = volume;
+  persistSettings();
 });
 
 deemphSelect.addEventListener("change", () => {
   deemphasis = deemphSelect.value;
   sendRadioConfig();
   addActivity("de-emphasis → " + deemphasis);
+  persistSettings();
 });
 
 toneSlider.addEventListener("input", () => {
   tone = Number(toneSlider.value);
   toneValue.textContent = tone === 0 ? "flat" : (tone > 0 ? "+" : "") + (tone * 6).toFixed(1) + " dB";
   sendRadioConfig();
+  persistSettings();
 });
 
 // ---------- waterfall / status controls ----------
@@ -690,10 +1030,19 @@ function updateStatusDetail() {
 function updateWfReadouts() {
   floorValue.textContent = Math.round(minDb) + " dB";
   speedValue.textContent = wfSpeed + "×";
+  scopeValue.textContent = spectrumRate + " Hz";
   const h = waterfallCanvas.clientHeight || 420;
   const fps = 30; // backend broadcasts at ~30 fps (BROADCAST_INTERVAL 0.03)
   const secs = Math.round((h / (wfSpeed * fps)) * 10) / 10;
   speedValue.title = "full-height scroll time ≈ " + secs + " s";
+}
+
+function renderSpectrumThrottled() {
+  const now = performance.now();
+  if (now - lastSpectrumDraw >= 1000 / spectrumRate) {
+    lastSpectrumDraw = now;
+    renderSpectrum();
+  }
 }
 
 floorSlider.addEventListener("input", () => {
@@ -701,16 +1050,29 @@ floorSlider.addEventListener("input", () => {
   renderLegend();
   renderSpectrum();
   updateWfReadouts();
+  persistSettings();
 });
 speedSlider.addEventListener("input", () => {
   wfSpeed = Number(speedSlider.value);
   updateWfReadouts();
+  persistSettings();
+});
+scopeSlider.addEventListener("input", () => {
+  spectrumRate = Number(scopeSlider.value);
+  updateWfReadouts();
+  persistSettings();
 });
 pauseBtn.addEventListener("click", () => {
   wfPaused = !wfPaused;
   pauseBtn.textContent = wfPaused ? "▶ Resume" : "⏸ Pause";
   pauseBtn.classList.toggle("paused", wfPaused);
 });
+
+timeAxisToggle.addEventListener("change", () => {
+  showTimeAxis = timeAxisToggle.checked;
+});
+
+grabBtn.addEventListener("click", grabWaterfall);
 
 // ---------- info panel (band / inspector / activity) ----------
 function renderInspector(m) {
@@ -740,6 +1102,168 @@ function addActivity(text) {
   activityLog.scrollTop = activityLog.scrollHeight;
 }
 
+// ---------- favorites ----------
+function loadFavorites() {
+  try {
+    return JSON.parse(localStorage.getItem("sdr-favorites") || "[]");
+  } catch (e) {
+    return [];
+  }
+}
+
+function persistFavorites() {
+  localStorage.setItem("sdr-favorites", JSON.stringify(favorites));
+}
+
+function addFavorite(name) {
+  favorites.push({
+    id: Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7),
+    name: name,
+    freq_hz: centerHz,
+    demod_mode: demodMode,
+    bandwidth_hz: audioBandwidth,
+  });
+  persistFavorites();
+  renderFavorites();
+}
+
+function removeFavorite(id) {
+  favorites = favorites.filter((f) => f.id !== id);
+  persistFavorites();
+  renderFavorites();
+}
+
+function tuneFavorite(fav) {
+  tune(fav.freq_hz);
+  demodMode = fav.demod_mode || demodMode;
+  demodSelect.value = demodMode;
+  const r = BW_RANGES[demodMode];
+  bwSlider.min = r.min; bwSlider.max = r.max; bwSlider.step = r.step;
+  audioBandwidth = fav.bandwidth_hz || DEMOD_BW[demodMode];
+  bwSlider.value = audioBandwidth;
+  bwValue.textContent = fmtHz(audioBandwidth);
+  sendRadioConfig();
+  renderSpectrum();
+  addActivity("tuned favorite: " + fav.name);
+}
+
+function renderFavorites() {
+  favoritesList.innerHTML = "";
+  favoritesCount.textContent = favorites.length;
+  if (!favorites.length) {
+    const e = document.createElement("div");
+    e.className = "fav-empty";
+    e.textContent = "No favorites yet — tune a station and click ★.";
+    favoritesList.appendChild(e);
+    return;
+  }
+  const sorted = [...favorites].sort((a, b) => a.freq_hz - b.freq_hz);
+  for (const fav of sorted) {
+    const row = document.createElement("div");
+    row.className = "fav-row";
+
+    const main = document.createElement("button");
+    main.className = "fav-main";
+    main.title = "Tune to " + fav.name;
+
+    const name = document.createElement("span");
+    name.className = "fav-name";
+    name.textContent = fav.name;
+
+    const meta = document.createElement("span");
+    meta.className = "fav-meta";
+    meta.textContent = (fav.freq_hz / 1e6).toFixed(3) + " MHz · " + (fav.demod_mode || "?").toUpperCase();
+
+    main.appendChild(name);
+    main.appendChild(meta);
+    main.addEventListener("click", () => tuneFavorite(fav));
+
+    const remove = document.createElement("button");
+    remove.className = "fav-remove";
+    remove.title = "Remove " + fav.name;
+    remove.textContent = "✕";
+    remove.addEventListener("click", () => removeFavorite(fav.id));
+
+    row.appendChild(main);
+    row.appendChild(remove);
+    favoritesList.appendChild(row);
+  }
+}
+
+saveBtn.addEventListener("click", () => {
+  const def = (centerHz / 1e6).toFixed(3) + " MHz";
+  const name = prompt("Name this favorite:", def);
+  if (name === null) return;
+  addFavorite(name.trim() || def);
+});
+
+favoritesHeader.addEventListener("click", () => {
+  favoritesOpen = !favoritesOpen;
+  favoritesList.classList.toggle("collapsed", !favoritesOpen);
+  favoritesToggle.textContent = favoritesOpen ? "−" : "+";
+});
+
+// ---------- settings persistence ----------
+const DEFAULT_SETTINGS = {
+  minDb: -60,
+  wfSpeed: 2,
+  spectrumRate: 30,
+  tone: 0,
+  volume: 0.3,
+  demodMode: "wfm",
+  audioBandwidth: 200000,
+  gain: "auto",
+  deemphasis: "75us",
+};
+
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem("sdr-settings") || "{}");
+    return { ...DEFAULT_SETTINGS, ...s };
+  } catch (e) {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function persistSettings() {
+  localStorage.setItem("sdr-settings", JSON.stringify({
+    minDb, wfSpeed, spectrumRate, tone, volume,
+    demodMode, audioBandwidth, gain, deemphasis,
+  }));
+}
+
+function applySettings() {
+  const s = loadSettings();
+  minDb = s.minDb;
+  wfSpeed = s.wfSpeed;
+  spectrumRate = s.spectrumRate;
+  tone = s.tone;
+  volume = s.volume;
+  demodMode = s.demodMode;
+  audioBandwidth = s.audioBandwidth;
+  gain = s.gain;
+  deemphasis = s.deemphasis;
+
+  floorSlider.value = minDb;
+  speedSlider.value = wfSpeed;
+  scopeSlider.value = spectrumRate;
+  toneSlider.value = tone;
+  volSlider.value = volume;
+  demodSelect.value = demodMode;
+  deemphSelect.value = deemphasis;
+  gainSelect.value = gain;
+  const r = BW_RANGES[demodMode];
+  bwSlider.min = r.min; bwSlider.max = r.max; bwSlider.step = r.step;
+  bwSlider.value = audioBandwidth;
+
+  floorValue.textContent = Math.round(minDb) + " dB";
+  speedValue.textContent = wfSpeed + "×";
+  scopeValue.textContent = spectrumRate + " Hz";
+  toneValue.textContent = tone === 0 ? "flat" : (tone > 0 ? "+" : "") + (tone * 6).toFixed(1) + " dB";
+  volValue.textContent = Math.round(volume * 100) + "%";
+  bwValue.textContent = fmtHz(audioBandwidth);
+}
+
 // ---------- init ----------
 bindCanvasInteractions(spectrumCanvas);
 bindCanvasInteractions(waterfallCanvas);
@@ -749,15 +1273,18 @@ window.addEventListener("resize", () => {
 });
 fitCanvas(spectrumCanvas);
 fitCanvas(waterfallCanvas);
+applySettings();
 renderLegend();
 updateWfReadouts();
-updateBandwidthUI();
+renderFavorites();
+renderHostHistory();
+if (recentHosts.length) {
+  hostInput.value = recentHosts[0].host;
+  portInput.value = recentHosts[0].port;
+}
 connectWS();
+restoreChatHistory();
 refreshStatus();
 setInterval(refreshStatus, 2000);
 
-// fetch model name for header
-fetch("/api/status").then(() => {
-  // model name comes via /api/chat; show generic for now
-  $("modelName").textContent = "";
-});
+loadModels();

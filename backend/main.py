@@ -5,13 +5,15 @@ import logging
 import queue
 from pathlib import Path
 
+import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
 import demod
-from ai_agent import chat as run_ai_chat
+from ai_agent import chat as run_ai_chat, chat_stream as run_ai_chat_stream
 from radio import Radio
 
 log = logging.getLogger(__name__)
@@ -47,6 +49,7 @@ class FreqCorrectionReq(BaseModel):
 class ChatReq(BaseModel):
     message: str
     history: list[dict] = []
+    model: str | None = None
 
 
 @app.on_event("startup")
@@ -137,7 +140,26 @@ def api_freq_correction(req: FreqCorrectionReq):
 
 @app.post("/api/chat")
 def api_chat(req: ChatReq):
-    return run_ai_chat(req.message, req.history, radio)
+    return run_ai_chat(req.message, req.history, radio, model=req.model)
+
+
+@app.post("/api/chat/stream")
+def api_chat_stream(req: ChatReq):
+    return StreamingResponse(
+        run_ai_chat_stream(req.message, req.history, radio, model=req.model),
+        media_type="application/x-ndjson",
+    )
+
+
+@app.get("/api/models")
+def api_models():
+    try:
+        resp = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=5)
+        resp.raise_for_status()
+        models = [m.get("name") for m in resp.json().get("models", [])]
+        return {"models": models}
+    except Exception as e:  # noqa: BLE001
+        return {"models": [], "error": str(e)}
 
 
 # ---- WebSocket ----

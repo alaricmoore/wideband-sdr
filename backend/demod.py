@@ -51,7 +51,7 @@ def _deemphasize(x, fs, tau):
 
 
 class Demodulator:
-    def __init__(self, sample_rate, mode="nbfm", bandwidth=None, deemphasis_tau=75e-6, tone=0.0):
+    def __init__(self, sample_rate, mode="wfm", bandwidth=None, deemphasis_tau=75e-6, tone=0.0):
         self.sample_rate = int(sample_rate)
         self.mode = mode
         self.bandwidth = int(bandwidth) if bandwidth else DEFAULT_BANDWIDTH.get(mode, 16_000)
