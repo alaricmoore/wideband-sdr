@@ -1,3 +1,5 @@
+import config
+
 from ai_agent import _build_context, _build_messages, _execute_tool
 
 
@@ -7,6 +9,7 @@ class FakeRadio:
         self.audio_mode = "nbfm"
         self.audio_bandwidth = None
         self.audio_tone = 0
+        self.audio_deemphasis = 75e-6
 
     def status(self):
         self.calls.append(("status",))
@@ -170,6 +173,8 @@ def test_build_context_includes_state():
     assert "98.800 MHz" in ctx
     assert "FM broadcast" in ctx
     assert "WFM" in ctx
+    assert "de-emphasis" in ctx
+    assert "tone" in ctx
 
 
 def test_build_messages_includes_context_and_history():
@@ -179,3 +184,47 @@ def test_build_messages_includes_context_and_history():
     assert "Current radio state" in msgs[0]["content"]
     assert msgs[1] == {"role": "user", "content": "hi"}
     assert msgs[-1] == {"role": "user", "content": "hello"}
+
+
+def test_build_messages_truncates_history():
+    r = FakeRadio()
+    history = [{"role": "user", "content": f"m{i}"} for i in range(80)]
+    msgs = _build_messages("hello", history, r)
+    assert len(msgs) == config.MAX_HISTORY_MESSAGES + 2  # system + capped history + user
+    assert msgs[0]["role"] == "system"
+    assert msgs[-1] == {"role": "user", "content": "hello"}
+    assert msgs[1]["content"] == "m40"  # oldest 40 dropped
+
+
+def test_get_spectrum_trims_and_caps_signals():
+    class PeakRadio(FakeRadio):
+        def spectrum_snapshot(self, top_n=20, threshold_db=10.0):
+            return {"peaks": [
+                {"freq_hz": 98_800_000.4, "power_db": -42.678, "bandwidth_hz": 200_000.6,
+                 "modulation_hint": "FM", "band": "FM broadcast", "extra": "drop-me"}
+                for _ in range(15)
+            ]}
+
+    r = PeakRadio()
+    res = _execute_tool("get_spectrum", {}, r)
+    assert len(res["peaks"]) == config.MAX_SIGNALS
+    p = res["peaks"][0]
+    assert p["freq_hz"] == 98_800_000
+    assert p["power_db"] == -42.7
+    assert p["bandwidth_hz"] == 200_001
+    assert "extra" not in p
+
+
+def test_scan_trims_and_caps_signals():
+    class ScanRadio(FakeRadio):
+        def scan(self, start_hz, stop_hz, step_hz=None):
+            return {"signals": [
+                {"freq_hz": 100_000_000.0, "power_db": -10.0, "bandwidth_hz": 100_000.0,
+                 "modulation_hint": "FM", "band": "FM broadcast"}
+                for _ in range(12)
+            ], "num_signals": 12}
+
+    r = ScanRadio()
+    res = _execute_tool("scan", {"start_hz": 88e6, "stop_hz": 108e6}, r)
+    assert len(res["signals"]) == config.MAX_SIGNALS
+    assert res["signals"][0]["freq_hz"] == 100_000_000

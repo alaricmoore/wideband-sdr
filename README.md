@@ -180,6 +180,8 @@ AI tool dispatch.
 | `RECONNECT_MAX_DELAY` | `30`          | reconnect backoff cap (seconds) |
 | `OLLAMA_URL`      | `http://localhost:11434` | Ollama API base |
 | `OLLAMA_MODEL`    | `gemma4:latest`   | model name (must support tools) |
+| `MAX_HISTORY_MESSAGES` | `40`          | max chat-history messages sent to the model |
+| `MAX_SIGNALS`     | `10`              | max signals returned per tool call |
 
 ## Running rtl_tcp
 
