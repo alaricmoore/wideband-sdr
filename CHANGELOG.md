@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Renamed the project to Wideband-SDR.
+- Zoomable spectrum: mouse-wheel or slider zoom into any region (double-click to
+  reset); `MIN_SPAN_HZ` sets the smallest zoom level.
+- Theme selector (Black, Dark, Midnight, Amber, Light, Solarized, Nord, Terminal).
+- Spectrum smoothing slider (temporal averaging of the trace).
+
+### Changed
+
+- `FFT_SIZE` default 2048 → 8192 for finer zoom resolution.
+- `AVERAGES` default 4 → 2 to reduce tuning latency.
+
+### Fixed
+
+- Click-to-tune snapping to a distant peak when zoomed (snap threshold now scales
+  with the visible span).
+
 ## [0.2.0] - 2026-10-10
 
 ### Added
@@ -33,5 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker and docker-compose setup.
 - Test suite covering DSP, demodulators, rtl_tcp protocol, and AI tool dispatch.
 
-[0.2.0]: https://github.com/OWNER/REPO/releases/tag/v0.2.0
-[0.1.0]: https://github.com/OWNER/REPO/releases/tag/v0.1.0
+[Unreleased]: https://github.com/kasp0r/wideband-sdr/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/kasp0r/wideband-sdr/releases/tag/v0.2.0
+[0.1.0]: https://github.com/kasp0r/wideband-sdr/releases/tag/v0.1.0
