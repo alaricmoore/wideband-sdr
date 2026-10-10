@@ -1,6 +1,8 @@
 # Wideband-SDR
 
 [![CI](https://github.com/kasp0r/wideband-sdr/actions/workflows/ci.yml/badge.svg)](https://github.com/kasp0r/wideband-sdr/actions/workflows/ci.yml)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Wideband-SDR turns a cheap **RTL-SDR** USB dongle into a web radio you can tune from any
@@ -31,11 +33,11 @@ Wideband-SDR is a browser front end plus a FastAPI backend that speaks the class
 demodulation) server-side. An **Ollama** tool-calling agent adds a natural-language control
 plane on top — `tune`, `scan`, `characterize`, `optimize`, and more.
 
-```
-[Browser] ──WS──▶ [FastAPI backend] ──TCP──▶ rtl_tcp @ 127.0.0.1:1234
-   ▲                  │  DSP (FFT, demod)
-   │                  └──▶ Ollama (tool-calling agent)
-   └── spectrum/waterfall, audio
+```mermaid
+flowchart LR
+    Browser[Browser] <-->|WebSocket<br/>spectrum · waterfall · audio| Backend[FastAPI backend]
+    Backend <-->|TCP<br/>rtl_tcp wire protocol| RTL[rtl_tcp<br/>RTL-SDR dongle]
+    Backend <-->|tool-calling| Ollama[Ollama]
 ```
 
 The backend is the **single** client to `rtl_tcp` (rtl_tcp only accepts one client at a
@@ -96,8 +98,9 @@ docker compose up --build
 
 Open http://localhost:8000
 
-> **SDR host.** The default rtl_tcp target is `127.0.0.1:1234`. If your dongle is on
-> another machine, set `SDR_HOST` (and `SDR_PORT`) to its address — either by copying
+> [!TIP]
+> The default rtl_tcp target is `127.0.0.1:1234`. If your dongle is on another
+> machine, set `SDR_HOST` (and `SDR_PORT`) to its address — either by copying
 > `.env.example` to `.env` and editing it, or by exporting the variable before
 > `docker compose up`.
 
@@ -114,9 +117,10 @@ cd backend
 OLLAMA_URL=http://localhost:11434 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-> **Note:** the app speaks the classic rtl_tcp wire protocol directly (see
-> `backend/rtltcp.py`) — it does *not* depend on `pyrtlsdr`, whose
-> `RtlSdrTcpClient` uses an incompatible JSON protocol meant for its own server.
+> [!NOTE]
+> The app speaks the classic rtl_tcp wire protocol directly (see `backend/rtltcp.py`) —
+> it does *not* depend on `pyrtlsdr`, whose `RtlSdrTcpClient` uses an incompatible JSON
+> protocol meant for its own server.
 
 ## Setting up Ollama
 
@@ -179,6 +183,10 @@ AI tool dispatch.
 
 ## Running rtl_tcp
 
+> [!WARNING]
+> rtl_tcp accepts only **one client at a time**. If a previous client disconnected
+> uncleanly, rtl_tcp can get stuck — restart it if new connections hang.
+
 On the machine with the dongle:
 
 ```bash
@@ -186,8 +194,6 @@ rtl_tcp -a 0.0.0.0 -p 1234
 ```
 
 Notes:
-- **Single client.** rtl_tcp accepts one connection at a time. If a previous client
-  disconnected uncleanly, rtl_tcp may get stuck — restart it if new connections hang.
 - **Auto-reconnect.** If the connection drops mid-stream, the backend marks itself
   disconnected and retries with exponential backoff (`RECONNECT_DELAY` up to
   `RECONNECT_MAX_DELAY`).
@@ -196,7 +202,8 @@ Notes:
   tuned frequency and the effective sample rate.
 - Keep sample rate ≤ ~2.4 MS/s (rtl_tcp / USB limit). The app defaults to 2.4 MS/s.
 
-### Managing rtl_tcp with sdr-server-stack
+<details>
+<summary>Managing rtl_tcp with sdr-server-stack</summary>
 
 Instead of running `rtl_tcp` by hand, you can manage it with
 [sdr-server-stack](https://github.com/kasp0r/sdr-server-stack) — a dependency-light
@@ -219,6 +226,8 @@ Then point Wideband-SDR at it by setting `SDR_HOST` to the SDR host's address an
 `SDR_PORT` to the port assigned in `sdr.conf` (the first dongle defaults to `1234`,
 the next to `1235`, and so on). To serve several dongles at once, run one Wideband-SDR
 instance per port, or switch dongles by changing `SDR_PORT`.
+
+</details>
 
 ## API overview
 
