@@ -1,5 +1,8 @@
 import config
 
+import json
+
+import ai_agent
 from ai_agent import _build_context, _build_messages, _execute_tool
 
 
@@ -228,3 +231,17 @@ def test_scan_trims_and_caps_signals():
     res = _execute_tool("scan", {"start_hz": 88e6, "stop_hz": 108e6}, r)
     assert len(res["signals"]) == config.MAX_SIGNALS
     assert res["signals"][0]["freq_hz"] == 100_000_000
+
+
+def test_tool_round_limit_from_config(monkeypatch):
+    monkeypatch.setattr(config, "MAX_TOOL_ROUNDS", 3)
+    rounds = []
+
+    def always_calls_a_tool(messages, model=None):
+        rounds.append(1)
+        yield {"type": "tool_calls", "tool_calls": [{"function": {"name": "get_status", "arguments": {}}}]}
+
+    monkeypatch.setattr(ai_agent, "_ollama_chat_stream", always_calls_a_tool)
+    events = [json.loads(e) for e in ai_agent.chat_stream("hi", [], FakeRadio())]
+    assert len(rounds) == 3
+    assert "limit" in events[-1]["reply"]

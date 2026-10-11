@@ -36,5 +36,6 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:latest")
 OLLAMA_TIMEOUT = _float("OLLAMA_TIMEOUT", 180)
 MAX_HISTORY_MESSAGES = _int("MAX_HISTORY_MESSAGES", 40)  # context-window safety
+MAX_TOOL_ROUNDS = _int("MAX_TOOL_ROUNDS", 10)  # model replies per chat turn before giving up
 MAX_SIGNALS = _int("MAX_SIGNALS", 10)  # signals returned to the model per tool call
 METRICS_INTERVAL = _int("METRICS_INTERVAL", 4)  # recompute signal metrics every N frames
