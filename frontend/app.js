@@ -734,7 +734,9 @@ async function refreshStatus() {
       addActivity(connected ? "connected to SDR" : "disconnected from SDR");
     }
     prevConnected = connected;
-    if (s.center_hz) freqInput.value = (s.center_hz / 1e6).toFixed(3);
+    if (s.center_hz && document.activeElement !== freqInput) {
+      freqInput.value = (s.center_hz / 1e6).toFixed(3);
+    }
     if (s.sample_rate) srSelect.value = String(s.sample_rate);
     if (s.gain && s.gain !== "None") {
       gain = s.gain;
