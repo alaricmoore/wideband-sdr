@@ -243,6 +243,9 @@ class _FakeStreamResp:
     def iter_lines(self):
         return iter(self._lines)
 
+    def close(self):
+        pass
+
 
 def _stream_tool_calls(monkeypatch, chunks):
     monkeypatch.setattr(ai_agent.requests, "post", lambda *a, **kw: _FakeStreamResp(chunks))
