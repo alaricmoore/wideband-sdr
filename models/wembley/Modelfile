@@ -1,0 +1,9 @@
+# wembley: GLM-4.5-Air capped at a 32k context so it fits entirely in the
+# iGPU's memory share (148 GB split CPU/GPU at 131k -> ~91 GB 100% GPU at 32k).
+# Shares the base model's weights on disk; remove with `ollama rm wembley`.
+#
+#   ollama pull MichelRosselli/GLM-4.5-Air:Q4_K_M
+#   ollama create wembley -f models/wembley/Modelfile
+#   man ./models/wembley/wembley.1
+FROM MichelRosselli/GLM-4.5-Air:Q4_K_M
+PARAMETER num_ctx 32768

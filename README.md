@@ -168,6 +168,20 @@ The app connects to `OLLAMA_URL` (default `http://localhost:11434`) with `OLLAMA
 (default `gemma4:latest`). You can also switch models live via the dropdown in the
 assistant header.
 
+### Meet Wembley
+
+This fork ships **Wembley**, a GLM-4.5-Air setup tuned for this app on machines
+with a big shared-memory iGPU: the same model with a 32k context window, so it fits
+entirely on the GPU instead of spilling onto the CPU.
+
+```bash
+ollama pull MichelRosselli/GLM-4.5-Air:Q4_K_M
+ollama create wembley -f models/wembley/Modelfile
+man ./models/wembley/wembley.1     # the Fraggle Rock Field Manual
+```
+
+Then set `OLLAMA_MODEL=wembley:latest`, or pick it from the model dropdown.
+
 ## Testing
 
 ```bash
