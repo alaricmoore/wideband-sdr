@@ -286,7 +286,16 @@ main {
   display: flex;
   flex-direction: column;
   min-width: 260px;
+  overflow-y: auto; /* on short screens, scroll the sidebar instead of squashing the chat */
 }
+/* drag handle between the radio and the sidebar; drag to widen the sidebar */
+#paneResizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+#paneResizer:hover, #paneResizer.active { background: var(--accent); }
 #infoPanel {
   border-bottom: 1px solid var(--border);
   padding: 10px 14px;
@@ -486,7 +495,8 @@ main {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
+  /* header + Ollama/model bars + chips + input are ~250px; the rest is the log */
+  min-height: 500px;
 }
 #infoHeader, #activityHeader, #favoritesHeader, #chatHeader { cursor: grab; }
 .dragging { opacity: 0.4; }
@@ -527,6 +537,7 @@ main {
 .chip:hover { background: var(--card-hover); color: var(--text); border-color: var(--muted); }
 #chatLog {
   flex: 1;
+  min-height: 240px;
   overflow-y: auto;
   padding: 12px;
   display: flex;
