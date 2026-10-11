@@ -791,6 +791,8 @@ async function sendChat() {
         if (ev.type === "token") {
           reply += ev.text;
           aiMsg.innerHTML = renderMarkdown(reply);
+        } else if (ev.type === "thinking") {
+          if (!reply) aiMsg.textContent = "thinking…";
         } else if (ev.type === "tool") {
           tools.push(ev.name);
           if (!toolMsg) toolMsg = addMsg("", "tool");
