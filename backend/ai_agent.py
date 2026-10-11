@@ -388,12 +388,12 @@ def _ollama_chat_stream(messages, model=None):
         yield {"type": "tool_calls", "tool_calls": final_tool_calls}
 
 
-def chat(user_message, history, radio, model=None, max_tool_rounds=10):
+def chat(user_message, history, radio, model=None, max_tool_rounds=None):
     """Run one agent turn. history is a list of {role, content} dicts."""
     messages = _build_messages(user_message, history, radio)
 
     tools_called = []
-    for _ in range(max_tool_rounds):
+    for _ in range(max_tool_rounds or config.MAX_TOOL_ROUNDS):
         try:
             data = _ollama_chat(messages, model)
         except requests.RequestException as e:
@@ -431,7 +431,7 @@ def chat(user_message, history, radio, model=None, max_tool_rounds=10):
     }
 
 
-def chat_stream(user_message, history, radio, model=None, max_tool_rounds=10):
+def chat_stream(user_message, history, radio, model=None, max_tool_rounds=None):
     """Stream one agent turn as newline-delimited JSON events.
 
     Events:
@@ -443,7 +443,7 @@ def chat_stream(user_message, history, radio, model=None, max_tool_rounds=10):
     messages = _build_messages(user_message, history, radio)
 
     tools_called = []
-    for _ in range(max_tool_rounds):
+    for _ in range(max_tool_rounds or config.MAX_TOOL_ROUNDS):
         content = ""
         tool_calls = None
         try:

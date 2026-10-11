@@ -277,3 +277,16 @@ def test_stream_tool_calls_without_index(monkeypatch):
     calls = _stream_tool_calls(monkeypatch, chunks)
     assert [c["function"]["name"] for c in calls] == ["tune", "get_status"]
     assert calls[0]["function"]["arguments"] == {"freq_hz": 1}
+
+def test_tool_round_limit_from_config(monkeypatch):
+    monkeypatch.setattr(config, "MAX_TOOL_ROUNDS", 3)
+    rounds = []
+
+    def always_calls_a_tool(messages, model=None):
+        rounds.append(1)
+        yield {"type": "tool_calls", "tool_calls": [{"function": {"name": "get_status", "arguments": {}}}]}
+
+    monkeypatch.setattr(ai_agent, "_ollama_chat_stream", always_calls_a_tool)
+    events = [json.loads(e) for e in ai_agent.chat_stream("hi", [], FakeRadio())]
+    assert len(rounds) == 3
+    assert "limit" in events[-1]["reply"]
