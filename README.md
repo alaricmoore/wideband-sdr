@@ -204,6 +204,7 @@ AI tool dispatch. The frontend tests cover the pure helpers in `frontend/lib.js`
 | `OLLAMA_MODEL`    | `gemma4:latest`   | model name (must support tools) |
 | `MAX_HISTORY_MESSAGES` | `40`          | max chat-history messages sent to the model |
 | `MAX_SIGNALS`     | `10`              | max signals returned per tool call |
+| `METRICS_INTERVAL` | `4`              | recompute signal metrics every N frames |
 
 ## Running rtl_tcp
 

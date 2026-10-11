@@ -93,6 +93,7 @@ let minSpanHz = 250000; // smallest allowed zoom span (from backend MIN_SPAN_HZ)
 let lastSampleRate = 2400000; // detect sample-rate changes so we can reset zoom
 let smoothing = 0; // 0..1 temporal smoothing of the spectrum trace (0 = off)
 let smoothBuf = null; // EMA buffer for smoothing
+let peaksCache = null; // cached clientPeaks() result, invalidated each spectrum frame
 let connected = false;
 let prevConnected = null; // for activity-log connection transitions
 let recentHosts = loadRecentHosts();
@@ -408,6 +409,7 @@ function renderAxis() {
 }
 
 function clientPeaks() {
+  if (peaksCache) return peaksCache;
   if (!power.length) return [];
   const n = power.length;
   // noise floor ~ median
@@ -426,7 +428,8 @@ function clientPeaks() {
     i = j;
   }
   peaks.sort((a, b) => b.db - a.db);
-  return peaks.slice(0, 8);
+  peaksCache = peaks.slice(0, 8);
+  return peaksCache;
 }
 
 // ---------- spectrum smoothing ----------
@@ -451,24 +454,28 @@ function connectWS() {
     const d = JSON.parse(ev.data);
     if (d.type === "spectrum") {
       const centerChanged = d.center_hz !== centerHz;
+      const sampleRateChanged = d.sample_rate !== lastSampleRate;
       centerHz = d.center_hz;
       sampleRate = d.sample_rate;
       power = d.power;
-      // Rebuild the (uniformly spaced) frequency axis client-side instead of
-      // shipping one float per FFT bin over the wire every frame.
-      const n = power.length;
-      const bin = sampleRate / n;
-      const f0 = centerHz - sampleRate / 2;
-      freqs = new Float64Array(n);
-      for (let i = 0; i < n; i++) freqs[i] = f0 + i * bin;
+      // Rebuild the (uniformly spaced) frequency axis only when tuning or the
+      // sample rate changes — it's otherwise identical every frame.
+      if (centerChanged || sampleRateChanged || !freqs.length) {
+        const n = power.length;
+        const bin = sampleRate / n;
+        const f0 = centerHz - sampleRate / 2;
+        freqs = new Float64Array(n);
+        for (let i = 0; i < n; i++) freqs[i] = f0 + i * bin;
+      }
       if (d.min_span_hz != null) minSpanHz = Math.min(d.min_span_hz, sampleRate);
-      if (sampleRate !== lastSampleRate) {
+      if (sampleRateChanged) {
         lastSampleRate = sampleRate;
         viewSpan = sampleRate; // reset zoom when the hardware span changes
         configureZoomControls();
       }
       if (centerChanged) smoothBuf = null; // don't crossfade across a retune
       applySmoothing();
+      peaksCache = null; // power changed → recompute peaks lazily
       bandChip.textContent = d.band || "—";
       renderInspector(d.metrics);
       if (!document.activeElement || document.activeElement !== freqInput) {

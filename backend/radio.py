@@ -34,6 +34,8 @@ class Radio:
 
         self.latest_spectrum = None
         self._spectrum_data = None  # full-precision (freqs, power) for the AI helpers
+        self._metrics = None  # cached signal metrics (recomputed every N frames)
+        self._frame_count = 0
         self.seq = 0
 
         # audio demodulation
@@ -255,6 +257,11 @@ class Radio:
                     iq, self.sample_rate, config.FFT_SIZE, cf, config.AVERAGES
                 )
                 self._spectrum_data = (freqs, power)
+                # Recompute signal metrics only every METRICS_INTERVAL frames —
+                # the inspector/AI don't need 30 Hz updates.
+                self._frame_count += 1
+                if self._metrics is None or self._frame_count % config.METRICS_INTERVAL == 0:
+                    self._metrics = dsp.signal_metrics(freqs, power, cf)
                 self.latest_spectrum = {
                     "type": "spectrum",
                     "center_hz": cf,
@@ -263,7 +270,7 @@ class Radio:
                     "demod_mode": self.audio_mode,
                     "bandwidth": self.effective_bandwidth(),
                     "band": dsp.band_context(cf),
-                    "metrics": dsp.signal_metrics(freqs, power, cf),
+                    "metrics": self._metrics,
                     # freqs is reconstructed client-side; power rounded to keep
                     # the per-frame JSON payload small at high FFT sizes.
                     "power": np.round(power, 2).tolist(),
