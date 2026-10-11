@@ -1,0 +1,199 @@
+.\" Man page for wembley, the GLM-4.5-Air fraggle that drives wideband-sdr.
+.\" View with: man ./models/wembley/wembley.1
+.TH WEMBLEY 1 "2026-10-11" "wideband-sdr" "Fraggle Rock Field Manual"
+.SH NAME
+wembley \- GLM-4.5-Air with a 32k context, the AI operator for wideband-sdr
+.SH SYNOPSIS
+.B ollama create wembley \-f models/wembley/Modelfile
+.PP
+.B ollama run wembley
+.PP
+.B OLLAMA_MODEL=wembley:latest
+in
+.I .env
+.SH DESCRIPTION
+.B wembley
+is a named copy of
+.B MichelRosselli/GLM-4.5-Air:Q4_K_M
+with one change: its context window is capped at 32,768 tokens instead of the
+model's full 131,072.
+.PP
+The smaller window keeps the whole model in the iGPU's share of system memory
+(91 GB, 100% GPU) instead of spilling onto the CPU (148 GB, 32%/68% CPU/GPU).
+The weights on disk are shared with the original model; wembley adds only a
+small settings layer.
+.PP
+Wembley is the Fraggle who can never make up his mind, and who also works as
+the siren for the Fraggle Rock Volunteer Fire Department. The name fits:
+before the parallel tool-call fix, GLM kept asking for the same tools over and
+over until it ran out of rounds. The original indecision was the app's fault,
+not the model's; see
+.BR HISTORY .
+.SH PARAMETERS
+.TP
+.B num_ctx 32768
+Context window. Big enough for the wideband-sdr system prompt, band plan, tool
+definitions, 40 chat messages and tool results (roughly 5\(en10k tokens).
+.TP
+.B stop """<|system|>"" ""<|user|>"" ""<|assistant|>"""
+Inherited from the base model.
+.TP
+.B capabilities
+completion, tools, thinking. Thinking is on by default; wideband-sdr shows it
+as
+.I thinking\&...
+in the chat bubble.
+.SH USAGE WITH WIDEBAND-SDR
+The stack, bottom to top:
+.PP
+.nf
+.RS
+NESDR Mini (RTL2832U + R820T)  --USB-->
+rtl_tcp :1234                  --TCP-->
+wideband-sdr backend :8000     <--tool calls-->  Ollama :11434 (wembley)
+browser http://localhost:8000
+.RE
+.fi
+.PP
+Start it:
+.PP
+.nf
+.RS
+rtl_tcp -a 127.0.0.1 -p 1234      # terminal 1, leave running
+# terminal 2: start the app as in README.md (Docker or uvicorn)
+.RE
+.fi
+.PP
+Without Docker, the backend reads the process environment, not
+.IR .env ,
+so load it first:
+.PP
+.nf
+.RS
+set \-a; source .env; set +a
+cd backend && uvicorn main:app \-\-host 127.0.0.1 \-\-port 8000
+.RE
+.fi
+.PP
+Then pick
+.B wembley
+in the assistant's model dropdown once; the browser remembers it.
+.PP
+Wembley works best with a narrow range and a clear task, like a lab assistant
+testing a hypothesis rather than a tour guide:
+.PP
+.RS
+.I Scan 162.4 to 162.55 MHz and tune to the strongest NOAA weather station in NBFM.
+.br
+.I Tune to 931 MHz and characterize the strongest signal.
+.br
+.I Scan 118 to 137 MHz with fixed gain 35 and list any signals.
+.RE
+.SH PERFORMANCE
+Measured 2026-10-11 on an AMD Hawk Point laptop (iGPU, 124 GB RAM, 96 GiB GTT),
+with the wideband-sdr system prompt and tools (1,858 prompt tokens):
+.PP
+.TS
+l r r.
+	original (131k)	wembley (32k)
+memory	148 GB split	91 GB 100% GPU
+prompt reading	18.9 tok/s	20.5 tok/s
+reply writing	3.2 tok/s	4.0 tok/s
+.TE
+.PP
+The speed gain is modest because the iGPU and CPU share the same RAM, and
+generation is limited mainly by memory bandwidth. The main win is the 57 GB of
+RAM handed back.
+.PP
+Expect a cold load (from disk) of about 5\(en6 minutes, a warm load (file
+still cached) of about 40 seconds, and about 90 seconds to read the system
+prompt on the first round of a chat. Later rounds reuse the cached prompt
+prefix and start faster.
+.SH ENVIRONMENT
+Set in
+.IR .env :
+.TP
+.B OLLAMA_MODEL=wembley:latest
+Default model for the assistant.
+.TP
+.B OLLAMA_TIMEOUT=600
+Seconds per Ollama request. Raised from 180 for slow loads and long thinking.
+.TP
+.B MAX_TOOL_ROUNDS=10
+Model replies per chat turn before giving up. Each reply may call several
+tools.
+.SH FILES
+.TP
+.I models/wembley/Modelfile
+Recipe. Edit the number and rebuild with
+.BR "ollama create wembley -f" " on this file."
+.TP
+.I models/wembley/wembley.1
+This page.
+.TP
+.I .env
+App settings; copy from
+.IR .env.example .
+.SH DIAGNOSTICS
+.TP
+.B ollama ps shows the model stuck on Stopping...
+Something still has a request open, usually the web app server finishing a
+chat. Stop the server; the first Ctrl-C waits for requests, a second one quits
+at once. The model unloads within seconds.
+.TP
+.B UI keeps connecting and disconnecting every ~5 s
+rtl_tcp is holding a dongle that went away (laptop slept, or the stick was
+unplugged). Ctrl-C rtl_tcp and start it again; the app reconnects on its own.
+.TP
+.B usb_claim_interface error -6
+The kernel TV driver grabbed the dongle. Check that
+.I /etc/modprobe.d/blacklist-rtlsdr.conf
+blacklists
+.BR dvb_usb_rtl28xxu ,
+then run
+.BR "sudo modprobe -r dvb_usb_rtl28xxu rtl2832" .
+.TP
+.B Model dropdown empty, status disconnected
+Wrong Ollama host or port in the assistant panel. The port is 11434.
+.TP
+.B "I reached my tool-calling limit"
+Should be rare since the parallel tool-call fix. If it keeps happening, raise
+.B MAX_TOOL_ROUNDS
+or give a narrower request.
+.SH HISTORY
+.TP
+2026-10-11
+Created. Same day, four bugs in wideband-sdr were found and fixed, each on its
+own branch for a pull request to kasp0r/wideband-sdr:
+.RS
+.IP \(bu 2
+.B fix/parallel-tool-calls
+\(em the app read the tool-call index from the wrong place, so when GLM asked
+for several tools at once only the last one ran. GLM kept re-asking, which
+looked like indecision. Not Wembley's fault after all.
+.IP \(bu 2
+.B fix/manual-tune-wins
+\(em typed frequencies got overwritten, and AI scans overrode manual tuning.
+.IP \(bu 2
+.B fix/chat-panel-usability
+\(em the chat could not be scrolled while a reply streamed.
+.IP \(bu 2
+.B fix/cancel-chat-on-disconnect
+\(em closing the tab now stops the chat instead of leaving GLM working for an
+empty room.
+.RE
+.SH BUGS
+A chat abandoned while the model is still loading or reading the prompt is not
+noticed until the first output arrives.
+.PP
+Cannot hear 40 m. That is the R820T tuner's floor (about 24 MHz), not
+Wembley; it needs an upconverter.
+.SH SEE ALSO
+.BR ollama (1),
+.BR rtl_tcp (1),
+.BR rtl_test (1),
+.BR rtl_433 (1)
+.PP
+Gobo, Mokey, Red, Boober, Uncle Traveling Matt.
+.SH AUTHORS
+Alaric Moore, KJ5HOD, with Claude.
