@@ -51,6 +51,30 @@ def test_scan_normalizes_reversed_range():
     assert res["scanned_hz"] == [100_000_000, 100_050_000]
 
 
+def test_scan_stops_and_keeps_user_tune():
+    r = _fake_radio(sample_rate=1_000)
+    # simulate the user tuning by hand during the second sweep step
+    def tune(f):
+        r.tuned.append(int(f))
+        if len(r.tuned) == 2:
+            r.user_tune(145_000_000)
+    r.tune = tune
+    res = r.scan(0, 10_000, step_hz=1_000)
+    assert res["interrupted"] is True
+    assert res["restored_center_hz"] is None
+    assert r.tuned[-1] == 145_000_000  # user's frequency wins, no restore
+    assert 100_000_000 not in r.tuned
+    assert len(r.tuned) < 10 + 1  # sweep stopped early
+
+
+def test_scan_ignores_stale_user_tune():
+    r = _fake_radio()
+    r.user_tune(145_000_000)  # a manual tune *before* the scan starts
+    res = r.scan(100_000_000, 100_050_000)
+    assert res["interrupted"] is False
+    assert r.tuned[-1] == 100_000_000  # normal restore
+
+
 class ReconnectMock:
     """rtl_tcp mock that drops its *first* connection after `drop_after` seconds,
     then holds subsequent (re)connections open so the client can verify reconnect."""

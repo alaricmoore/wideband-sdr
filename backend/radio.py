@@ -32,6 +32,11 @@ class Radio:
         self.port = config.SDR_PORT
         self._reconnect_attempts = 0
 
+        # Set when the user tunes by hand; a running scan() stops and does not
+        # restore its original frequency, so the user's choice wins.
+        self._scan_abort = threading.Event()
+        self._user_freq = None
+
         self.latest_spectrum = None
         self._spectrum_data = None  # full-precision (freqs, power) for the AI helpers
         self._metrics = None  # cached signal metrics (recomputed every N frames)
@@ -125,6 +130,12 @@ class Radio:
             self.sdr.set_center_freq(freq_hz)
             self.center_freq = freq_hz
         return self.status()
+
+    def user_tune(self, freq_hz):
+        """Tune on behalf of a person (UI / REST): interrupts any running scan."""
+        self._user_freq = int(freq_hz)
+        self._scan_abort.set()
+        return self.tune(freq_hz)
 
     def fine_tune(self, offset_hz):
         return self.tune(self.center_freq + int(offset_hz))
@@ -345,14 +356,24 @@ class Radio:
         original = self.center_freq
         found = []
         truncated = False
+        interrupted = False
+        self._scan_abort.clear()
         steps = 0
         freq = start_hz
         while freq < stop_hz:
             if steps >= max_steps:
                 truncated = True
                 break
+            if self._scan_abort.is_set():
+                interrupted = True
+                break
             self.tune(freq)
             time.sleep(dwell)
+            if self._scan_abort.is_set():
+                # the user retuned during this step's dwell; don't record peaks
+                # from their frequency as scan results
+                interrupted = True
+                break
             snap = self.spectrum_snapshot(top_n=10, threshold_db=10.0)
             for p in snap.get("peaks", []):
                 if start_hz <= p["freq_hz"] < stop_hz:
@@ -361,8 +382,12 @@ class Radio:
                     found.append(p)
             freq += step
             steps += 1
-        # restore
-        self.tune(original)
+        if interrupted:
+            # Re-apply the user's frequency in case a scan step landed just
+            # after their tune; never restore over a manual choice.
+            self.tune(self._user_freq)
+        else:
+            self.tune(original)
         # de-duplicate by frequency bin
         dedup = {}
         for p in found:
@@ -370,11 +395,16 @@ class Radio:
             if key not in dedup or p["power_db"] > dedup[key]["power_db"]:
                 dedup[key] = p
         signals = sorted(dedup.values(), key=lambda p: -p["power_db"])
-        return {
+        result = {
             "scanned_hz": [start_hz, stop_hz],
             "step_hz": step,
             "num_signals": len(signals),
             "signals": signals,
-            "restored_center_hz": original,
+            "restored_center_hz": None if interrupted else original,
             "truncated": truncated,
+            "interrupted": interrupted,
         }
+        if interrupted:
+            result["note"] = ("Scan stopped early because the user tuned manually to "
+                              f"{self._user_freq} Hz. Leave the receiver there.")
+        return result

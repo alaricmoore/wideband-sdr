@@ -124,7 +124,7 @@ def api_disconnect():
 
 @app.post("/api/tune")
 def api_tune(req: TuneReq):
-    return radio.tune(req.freq_hz)
+    return radio.user_tune(req.freq_hz)
 
 
 @app.post("/api/gain")
@@ -204,7 +204,7 @@ async def ws_endpoint(ws: WebSocket):
                 continue
             t = data.get("type")
             if t == "tune":
-                radio.tune(float(data.get("freq_hz", 0)))
+                radio.user_tune(float(data.get("freq_hz", 0)))
             elif t == "gain":
                 g = str(data.get("gain", "auto"))
                 radio.set_gain("auto" if g.lower() == "auto" else float(g))
