@@ -745,13 +745,20 @@ async function refreshStatus() {
 }
 
 // ---------- chat ----------
+// Only follow new output if the reader is already at the bottom, so scrolling
+// up to read earlier text isn't undone by every streamed token.
+function chatAtBottom() {
+  return chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 40;
+}
+
 function addMsg(text, role) {
+  const stick = role === "user" || chatAtBottom();
   const d = document.createElement("div");
   d.className = "msg " + role;
   if (role === "ai") d.innerHTML = renderMarkdown(text);
   else d.textContent = text;
   chatLog.appendChild(d);
-  chatLog.scrollTop = chatLog.scrollHeight;
+  if (stick) chatLog.scrollTop = chatLog.scrollHeight;
   return d;
 }
 
@@ -787,6 +794,7 @@ async function sendChat() {
         if (!line) continue;
         let ev;
         try { ev = JSON.parse(line); } catch { continue; }
+        const stick = chatAtBottom();
 
         if (ev.type === "token") {
           reply += ev.text;
@@ -801,7 +809,7 @@ async function sendChat() {
           aiMsg.textContent = "⚠️ " + ev.message;
           reply = "";
         }
-        chatLog.scrollTop = chatLog.scrollHeight;
+        if (stick) chatLog.scrollTop = chatLog.scrollHeight;
       }
     }
   } catch (e) {
@@ -1609,7 +1617,42 @@ try {
   if (localStorage.getItem("sdr-audio-row") === "0") setAudioRow(false);
 } catch (e) { /* ignore */ }
 
+// ---------- resizable sidebar ----------
+function initPaneResizer() {
+  const handle = $("paneResizer");
+  const pane = $("chatPane");
+  const KEY = "sdr-sidebar-width";
+  const clamp = (w) => Math.max(260, Math.min(w, window.innerWidth * 0.7));
+  const refit = () => window.dispatchEvent(new Event("resize")); // redraw canvases
+
+  try {
+    const saved = Number(localStorage.getItem(KEY));
+    if (saved) pane.style.width = clamp(saved) + "px";
+  } catch (e) { /* ignore */ }
+
+  handle.addEventListener("pointerdown", (e) => {
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add("active");
+  });
+  handle.addEventListener("pointermove", (e) => {
+    if (!handle.hasPointerCapture(e.pointerId)) return;
+    pane.style.width = clamp(window.innerWidth - e.clientX) + "px";
+  });
+  handle.addEventListener("pointerup", (e) => {
+    handle.releasePointerCapture(e.pointerId);
+    handle.classList.remove("active");
+    try { localStorage.setItem(KEY, String(pane.offsetWidth)); } catch (err) { /* ignore */ }
+    refit();
+  });
+  handle.addEventListener("dblclick", () => {
+    pane.style.width = "";
+    try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+    refit();
+  });
+}
+
 // ---------- init ----------
+initPaneResizer();
 bindCanvasInteractions(spectrumCanvas);
 bindCanvasInteractions(waterfallCanvas);
 window.addEventListener("resize", () => {
