@@ -327,8 +327,12 @@ def _ollama_chat(messages, model=None):
 
 
 def _ollama_chat_stream(messages, model=None):
-    """Yield {"type":"token","text":...} chunks and, at the end, a
-    {"type":"tool_calls","tool_calls":[...]} event if the model called tools."""
+    """Yield {"type":"token","text":...} chunks, {"type":"thinking"} heartbeats
+    while a reasoning model thinks, and, at the end, a
+    {"type":"tool_calls","tool_calls":[...]} event if the model called tools.
+
+    Closing this generator closes the HTTP response, which makes Ollama stop
+    generating."""
     resp = requests.post(
         f"{config.OLLAMA_URL}/api/chat",
         json={
@@ -341,6 +345,13 @@ def _ollama_chat_stream(messages, model=None):
         timeout=config.OLLAMA_TIMEOUT,
         stream=True,
     )
+    try:
+        yield from _parse_ollama_stream(resp)
+    finally:
+        resp.close()
+
+
+def _parse_ollama_stream(resp):
     resp.raise_for_status()
 
     tool_calls = {}  # index -> {"name": str, "arguments": str | dict}
@@ -352,6 +363,8 @@ def _ollama_chat_stream(messages, model=None):
         except json.JSONDecodeError:
             continue
         msg = data.get("message", {})
+        if msg.get("thinking"):
+            yield {"type": "thinking"}
         if msg.get("content"):
             yield {"type": "token", "text": msg["content"]}
         for tc in msg.get("tool_calls") or []:
@@ -435,6 +448,7 @@ def chat_stream(user_message, history, radio, model=None, max_tool_rounds=None):
     """Stream one agent turn as newline-delimited JSON events.
 
     Events:
+      {"type":"thinking"}                     heartbeat while the model reasons
       {"type":"tool","name":...,"args":...}   when a tool is called
       {"type":"token","text":...}             a chunk of the final answer
       {"type":"done","reply":...}             completion
@@ -451,6 +465,8 @@ def chat_stream(user_message, history, radio, model=None, max_tool_rounds=None):
                 if chunk["type"] == "token":
                     content += chunk["text"]
                     yield json.dumps({"type": "token", "text": chunk["text"]}) + "\n"
+                elif chunk["type"] == "thinking":
+                    yield json.dumps({"type": "thinking"}) + "\n"
                 elif chunk["type"] == "tool_calls":
                     tool_calls = chunk["tool_calls"]
         except requests.RequestException as e:

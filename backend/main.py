@@ -8,6 +8,7 @@ from pathlib import Path
 import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -149,11 +150,20 @@ def api_chat(req: ChatReq):
 
 
 @app.post("/api/chat/stream")
-def api_chat_stream(req: ChatReq):
-    return StreamingResponse(
-        run_ai_chat_stream(req.message, req.history, radio, model=req.model),
-        media_type="application/x-ndjson",
-    )
+async def api_chat_stream(req: ChatReq):
+    events = run_ai_chat_stream(req.message, req.history, radio, model=req.model)
+
+    async def stream():
+        try:
+            async for line in iterate_in_threadpool(events):
+                yield line
+        finally:
+            # Runs on completion and when the browser disconnects (Starlette
+            # cancels the stream). Closing the agent generator stops further
+            # tool rounds and drops the Ollama request so generation stops.
+            events.close()
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
 def _ollama_status():

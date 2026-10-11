@@ -243,6 +243,9 @@ class _FakeStreamResp:
     def iter_lines(self):
         return iter(self._lines)
 
+    def close(self):
+        pass
+
 
 def _stream_tool_calls(monkeypatch, chunks):
     monkeypatch.setattr(ai_agent.requests, "post", lambda *a, **kw: _FakeStreamResp(chunks))
@@ -290,3 +293,50 @@ def test_tool_round_limit_from_config(monkeypatch):
     events = [json.loads(e) for e in ai_agent.chat_stream("hi", [], FakeRadio())]
     assert len(rounds) == 3
     assert "limit" in events[-1]["reply"]
+
+
+class _FakeOllamaResp:
+    """Streams canned Ollama chunks and records whether it was closed."""
+
+    def __init__(self, chunks):
+        self._lines = [json.dumps(c).encode() for c in chunks]
+        self.closed = False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+    def close(self):
+        self.closed = True
+
+
+def test_stream_emits_thinking_heartbeats(monkeypatch):
+    resp = _FakeOllamaResp([
+        {"message": {"thinking": "hmm"}},
+        {"message": {"thinking": "ok"}},
+        {"message": {"content": "Hi"}},
+        {"message": {}, "done": True},
+    ])
+    monkeypatch.setattr(ai_agent.requests, "post", lambda *a, **kw: resp)
+    events = [json.loads(e) for e in ai_agent.chat_stream("hi", [], FakeRadio())]
+    assert [e["type"] for e in events] == ["thinking", "thinking", "token", "done"]
+    assert resp.closed
+
+
+def test_closing_chat_stream_stops_tools_and_drops_ollama_request(monkeypatch):
+    # The model is thinking and would then call a tool; the browser disconnects
+    # (the server closes the generator) after the first heartbeat.
+    resp = _FakeOllamaResp([
+        {"message": {"thinking": "let me scan"}},
+        {"message": {"tool_calls": [{"function": {"name": "tune", "arguments": {"freq_hz": 1}}}]}},
+        {"message": {}, "done": True},
+    ])
+    monkeypatch.setattr(ai_agent.requests, "post", lambda *a, **kw: resp)
+    radio = FakeRadio()
+    events = ai_agent.chat_stream("scan", [], radio)
+    assert json.loads(next(events))["type"] == "thinking"
+    events.close()
+    assert resp.closed  # Ollama sees the disconnect and stops generating
+    assert not any(c[0] == "tune" for c in radio.calls)  # no tool ran after the disconnect
