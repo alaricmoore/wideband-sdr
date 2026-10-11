@@ -356,7 +356,12 @@ def _ollama_chat_stream(messages, model=None):
             yield {"type": "token", "text": msg["content"]}
         for tc in msg.get("tool_calls") or []:
             fn = tc.get("function") or {}
-            idx = tc.get("index", 0)
+            # Ollama's native API puts the index inside "function" and sends each
+            # parallel call as its own complete chunk; reading only tc["index"]
+            # filed every call under 0, so only the last one survived.
+            idx = tc.get("index", fn.get("index"))
+            if idx is None:
+                idx = len(tool_calls)
             entry = tool_calls.setdefault(idx, {"name": "", "arguments": ""})
             if fn.get("name"):
                 entry["name"] = fn["name"]

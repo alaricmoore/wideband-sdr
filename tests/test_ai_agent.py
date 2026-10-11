@@ -1,5 +1,8 @@
 import config
 
+import json
+
+import ai_agent
 from ai_agent import _build_context, _build_messages, _execute_tool
 
 
@@ -228,3 +231,49 @@ def test_scan_trims_and_caps_signals():
     res = _execute_tool("scan", {"start_hz": 88e6, "stop_hz": 108e6}, r)
     assert len(res["signals"]) == config.MAX_SIGNALS
     assert res["signals"][0]["freq_hz"] == 100_000_000
+
+
+class _FakeStreamResp:
+    def __init__(self, chunks):
+        self._lines = [json.dumps(c).encode() for c in chunks]
+
+    def raise_for_status(self):
+        pass
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+
+def _stream_tool_calls(monkeypatch, chunks):
+    monkeypatch.setattr(ai_agent.requests, "post", lambda *a, **kw: _FakeStreamResp(chunks))
+    events = list(ai_agent._ollama_chat_stream([]))
+    calls = [e for e in events if e["type"] == "tool_calls"]
+    return calls[0]["tool_calls"] if calls else []
+
+
+def test_stream_keeps_parallel_tool_calls(monkeypatch):
+    # Shape captured from Ollama + GLM-4.5-Air: two calls, separate chunks,
+    # index nested inside "function".
+    chunks = [
+        {"message": {"content": "Checking."}},
+        {"message": {"tool_calls": [{"id": "a", "function": {
+            "index": 0, "name": "get_status", "arguments": {}}}]}},
+        {"message": {"tool_calls": [{"id": "b", "function": {
+            "index": 1, "name": "get_spectrum", "arguments": {}}}]}},
+        {"message": {}, "done": True},
+    ]
+    names = [c["function"]["name"] for c in _stream_tool_calls(monkeypatch, chunks)]
+    assert names == ["get_status", "get_spectrum"]
+
+
+def test_stream_tool_calls_without_index(monkeypatch):
+    chunks = [
+        {"message": {"tool_calls": [
+            {"function": {"name": "tune", "arguments": {"freq_hz": 1}}},
+            {"function": {"name": "get_status", "arguments": {}}},
+        ]}},
+        {"message": {}, "done": True},
+    ]
+    calls = _stream_tool_calls(monkeypatch, chunks)
+    assert [c["function"]["name"] for c in calls] == ["tune", "get_status"]
+    assert calls[0]["function"]["arguments"] == {"freq_hz": 1}
