@@ -50,6 +50,7 @@ browsers.
 
 - [Features](#features)
 - [Supported hardware](#supported-hardware)
+- [First-time dongle setup (Linux)](#first-time-dongle-setup-linux)
 - [Quick start](#quick-start)
 - [Setting up Ollama](#setting-up-ollama)
 - [Testing](#testing)
@@ -100,11 +101,80 @@ would unlock many devices at once) — would slot in alongside it. Note that som
 devices (e.g. the HF+ Discovery) top out below the RTL-SDR's 2.4 MHz sample rate, so
 the visible spectrum span would be correspondingly narrower.
 
+## First-time dongle setup (Linux)
+
+Do this once per machine that has the dongle plugged in. It gets you from "new USB
+stick" to a running `rtl_tcp` server, which is what the app connects to.
+
+### 1. Install the RTL-SDR tools
+
+`rtl_tcp` and `rtl_test` come from your distro's `rtl-sdr` package:
+
+```bash
+sudo dnf install rtl-sdr        # Fedora
+sudo apt install rtl-sdr        # Debian / Ubuntu / Raspberry Pi OS
+sudo pacman -S rtl-sdr          # Arch
+```
+
+On macOS, `brew install librtlsdr` provides the same tools.
+
+### 2. Keep the kernel's TV driver off the dongle
+
+RTL-SDR sticks started life as digital-TV tuners, so Linux loads a DVB-T TV driver
+(`dvb_usb_rtl28xxu`) when you plug one in. While that driver holds the stick,
+`rtl_test` and `rtl_tcp` can't open it. Some distro packages block the driver for
+you; check whether it's loaded:
+
+```bash
+lsmod | grep dvb_usb_rtl28xxu
+```
+
+If that prints anything, block the driver and unload it (no reboot needed):
+
+```bash
+echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtlsdr.conf
+sudo modprobe -r dvb_usb_rtl28xxu rtl2832
+```
+
+### 3. Check the dongle
+
+Plug it in and run:
+
+```bash
+rtl_test -t
+```
+
+You should see the tuner named, e.g. `Found Rafael Micro R820T tuner`. Press Ctrl-C
+to stop.
+
+| You see | It means |
+|---|---|
+| `usb_claim_interface error -6` | The TV driver still has the stick. Redo step 2. |
+| `No supported devices found` | Not plugged in, or not seen over USB. Check `lsusb` for a `0bda:2838` Realtek device. |
+| `usb_open error -3` | Permissions. Your distro's `rtl-sdr` package normally installs udev rules for this; unplug and replug the stick after installing. |
+
+### 4. Start rtl_tcp
+
+```bash
+rtl_tcp -a 127.0.0.1 -p 1234
+```
+
+Leave it running in its own terminal. `127.0.0.1` keeps the dongle private to this
+machine; use `-a 0.0.0.0` only if the app runs on a different machine (see
+[Running rtl_tcp](#running-rtl_tcp)).
+
+> [!IMPORTANT]
+> `rtl_tcp` opens the dongle once, at startup. If the computer sleeps or the stick
+> is unplugged, `rtl_tcp` keeps running but holds a stale handle: the app connects,
+> gets no samples, and drops the connection every few seconds. **Restart `rtl_tcp`**
+> (Ctrl-C, then run it again); the app reconnects on its own.
+
 ## Quick start
 
 ### 1. Prerequisites
 
-- The rtl_tcp server running (see below).
+- The rtl_tcp server running (see
+  [First-time dongle setup](#first-time-dongle-setup-linux)).
 - Ollama running and a tool-capable model pulled, e.g.:
   ```bash
   ollama pull gemma4   # or any tool-capable model you prefer
@@ -133,9 +203,15 @@ on a different machine, set `OLLAMA_URL` accordingly.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env              # then edit, e.g. OLLAMA_MODEL
+set -a; source .env; set +a       # export the settings into this shell
 cd backend
-OLLAMA_URL=http://localhost:11434 uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 127.0.0.1 --port 8000
 ```
+
+Only Docker Compose reads `.env` automatically; the backend itself reads the process
+environment, hence the `source` line. Use `--host 0.0.0.0` instead if you want to
+open the app from other machines on your network (it has no login).
 
 > [!NOTE]
 > The app speaks the classic rtl_tcp wire protocol directly (see `backend/rtltcp.py`) —
@@ -241,6 +317,8 @@ Notes:
   `FREQ_CORRECTION` to your dongle's ppm offset (e.g. `28`), which corrects both the
   tuned frequency and the effective sample rate.
 - Keep sample rate ≤ ~2.4 MS/s (rtl_tcp / USB limit). The app defaults to 2.4 MS/s.
+- **After sleep or unplugging**, restart `rtl_tcp`: it keeps a handle to the old USB
+  device, and the app will connect and drop every few seconds until you do.
 
 <details>
 <summary>Managing rtl_tcp with sdr-server-stack</summary>
